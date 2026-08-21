@@ -34,9 +34,8 @@ you've seen the diff.
 **Linux (Debian/Ubuntu):**
 
 ```bash
-sudo apt-get update && sudo apt-get install -y git python3 docker.io
 git clone https://github.com/kascadeceo/saferoom && cd saferoom
-sudo ./install.sh
+sudo ./install.sh   # installs git/python3/docker.io only if missing; leaves an existing Docker alone
 ```
 
 **macOS:** install [Docker Desktop](https://www.docker.com/products/docker-desktop/),

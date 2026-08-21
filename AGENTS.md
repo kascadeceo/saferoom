@@ -85,7 +85,7 @@ only dummies appear. CI (`.github/workflows/ci.yml`) mirrors these checks —
 **when you add a security-relevant feature, add a CI assertion for it in the
 same PR.**
 
-Needed tools on Debian/Ubuntu: `apt-get install -y git python3 docker.io`.
+Needed tools on Debian/Ubuntu: `git python3 docker.io` (`install.sh` apt-installs only what's missing and never installs `docker.io` over an existing Docker — it conflicts with a running daemon).
 
 ## Roadmap (work top-down unless directed otherwise)
 
