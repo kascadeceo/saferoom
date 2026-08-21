@@ -17,8 +17,10 @@ if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update -qq
     sudo apt-get install -y -qq "${pkgs[@]}"
   fi
-  if getent group docker >/dev/null; then
-    sudo usermod -aG docker "$USER" || true
+  # Add the real user (not root, when run via sudo) to the docker group.
+  u="${SUDO_USER:-${USER:-$(id -un)}}"
+  if getent group docker >/dev/null && [[ "$u" != root ]]; then
+    sudo usermod -aG docker "$u" || true
   fi
 elif [[ "$(uname)" == "Darwin" ]]; then
   command -v docker >/dev/null || echo "Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
