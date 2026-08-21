@@ -1,0 +1,4 @@
+.saferoom/
+__pycache__/
+*.pyc
+launch/

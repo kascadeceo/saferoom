@@ -1,0 +1,37 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax check
+        run: python -m py_compile saferoom.py
+      - name: Smoke test (local mode)
+        run: |
+          git config --global user.email ci@saferoom.local
+          git config --global user.name CI
+          mkdir /tmp/demo && cd /tmp/demo && git init -q
+          printf 'API_KEY=real-secret\nDB_URL=postgres://real@prod/db\n' > .env
+          printf 'print("hi")\n' > app.py
+          git add -A && git commit -qm init
+          python $GITHUB_WORKSPACE/saferoom.py init
+          grep -q 'sr-dummy' .env.saferoom
+          python $GITHUB_WORKSPACE/saferoom.py run --local -- "echo new > new.txt && cat .env" | tee out.log
+          grep -q 'sr-dummy-secret' out.log          # agent saw dummies, not real creds
+          ! grep -q 'real-secret' out.log            # real secret never leaked
+          python $GITHUB_WORKSPACE/saferoom.py review | grep -q 'new.txt'
+          python $GITHUB_WORKSPACE/saferoom.py approve
+          test -f new.txt
+          grep -q 'real-secret' .env                 # real .env untouched
+      - name: Docker smoke test
+        run: |
+          mkdir /tmp/demo2 && cd /tmp/demo2 && git init -q
+          printf 'API_KEY=real-secret\n' > .env
+          git add -A && git commit -qm init
+          python $GITHUB_WORKSPACE/saferoom.py init
+          python $GITHUB_WORKSPACE/saferoom.py run --offline --image python:3.12-slim -- "echo boxed > box.txt && cat .env"
+          python $GITHUB_WORKSPACE/saferoom.py review | grep -q 'box.txt'

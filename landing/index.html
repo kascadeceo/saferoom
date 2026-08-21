@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeRoom — the sign-off layer for AI coding agents</title>
+<meta name="description" content="SafeRoom clones your repo into a credential-stripped Docker sandbox, logs everything your AI agent does, and gates the result behind your approval. Single Python file, MIT, fully local.">
+<meta property="og:title" content="SafeRoom — Sandbox, audit, approve.">
+<meta property="og:description" content="Cloud sandboxes solve where agent code runs. SafeRoom solves what ships.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://getsaferoom.netlify.app">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230f172a'/%3E%3Cpath d='M50 18 L78 30 V52 C78 68 66 79 50 84 C34 79 22 68 22 52 V30 Z' fill='%2322c55e'/%3E%3Cpath d='M38 52 L47 61 L64 42' stroke='%230f172a' stroke-width='8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root{--bg:#0b1220;--panel:#111a2e;--line:#1f2a44;--text:#e6edf7;--muted:#9fb0c9;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--blue:#60a5fa;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:system-ui,-apple-system,"Segoe UI",Roboto,Inter,sans-serif}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+  header{border-bottom:1px solid var(--line)}
+  nav{display:flex;align-items:center;justify-content:space-between;height:64px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+  .logo svg{width:26px;height:26px}
+  nav ul{display:flex;gap:22px;list-style:none;font-size:14px}
+  nav ul a{color:var(--muted)}nav ul a:hover{color:var(--text);text-decoration:none}
+  .btn{display:inline-block;padding:12px 20px;border-radius:8px;font-weight:600;font-size:15px;border:1px solid transparent;transition:.15s}
+  .btn:hover{text-decoration:none;transform:translateY(-1px)}
+  .btn-primary{background:var(--green);color:#052e16}.btn-primary:hover{background:#34d370}
+  .btn-ghost{border-color:var(--line);color:var(--text)}.btn-ghost:hover{border-color:var(--muted)}
+  .hero{padding:88px 0 64px;text-align:center}
+  .eyebrow{display:inline-block;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--green);border:1px solid rgba(34,197,94,.35);border-radius:999px;padding:5px 12px;margin-bottom:22px}
+  h1{font-size:clamp(34px,6vw,58px);line-height:1.08;letter-spacing:-.02em;max-width:820px;margin:0 auto 18px}
+  .sub{font-size:clamp(17px,2.2vw,21px);color:var(--muted);max-width:700px;margin:0 auto 32px}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .flow{margin:56px auto 0;max-width:900px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;font-family:var(--mono);font-size:13.5px;color:var(--muted);overflow-x:auto;text-align:left;white-space:pre}
+  .flow b{color:var(--text);font-weight:600}.flow .g{color:var(--green)}.flow .a{color:var(--amber)}
+  section{padding:64px 0;border-top:1px solid var(--line)}
+  h2{font-size:clamp(26px,3.4vw,34px);letter-spacing:-.01em;margin-bottom:12px}
+  .lead{color:var(--muted);max-width:720px;margin-bottom:36px;font-size:17px}
+  .grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px}
+  .card h3{font-size:17px;margin-bottom:8px}
+  .card p{color:var(--muted);font-size:15px}
+  .num{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;vertical-align:-6px;margin-right:10px;background:rgba(34,197,94,.15);color:var(--green);font-family:var(--mono);font-size:13px}
+  pre.code{background:#070c17;border:1px solid var(--line);border-radius:12px;padding:20px 22px;font-family:var(--mono);font-size:14px;color:var(--text);overflow-x:auto;line-height:1.7}
+  pre.code .c{color:#64748b}pre.code .p{color:var(--green)}
+  .terminal{background:#070c17;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:28px}
+  .terminal .bar{display:flex;gap:7px;padding:10px 14px;border-bottom:1px solid var(--line);background:#0d1526}
+  .terminal .bar i{width:11px;height:11px;border-radius:50%;display:block;background:#334155}
+  .terminal .bar i:nth-child(1){background:var(--red)}.terminal .bar i:nth-child(2){background:var(--amber)}.terminal .bar i:nth-child(3){background:var(--green)}
+  .terminal pre{padding:18px 22px;font-family:var(--mono);font-size:13.5px;line-height:1.65;color:var(--text);overflow-x:auto;white-space:pre}
+  .terminal .c{color:#64748b}.terminal .g{color:var(--green)}.terminal .a{color:var(--amber)}.terminal .r{color:var(--red)}.terminal .m{color:var(--muted)}
+  ul.checks{list-style:none;display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  ul.checks li{padding-left:30px;position:relative;color:var(--muted)}
+  ul.checks li::before{content:"✓";position:absolute;left:0;top:0;color:var(--green);font-weight:700}
+  ul.checks li b{color:var(--text)}
+  .pricing{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));max-width:820px}
+  .plan{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px}
+  .plan.pro{border-color:rgba(34,197,94,.5);box-shadow:0 0 0 1px rgba(34,197,94,.15) inset}
+  .plan h3{font-size:20px}
+  .price{font-size:40px;font-weight:700;margin:8px 0 4px}.price small{font-size:15px;color:var(--muted);font-weight:400}
+  .plan ul{list-style:none;margin:18px 0 24px;color:var(--muted);display:grid;gap:9px}
+  .plan li::before{content:"—";color:var(--green);margin-right:9px}
+  .tag{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--green);margin-bottom:8px}
+  .faq details{border-top:1px solid var(--line);padding:18px 0}
+  .faq details:last-child{border-bottom:1px solid var(--line)}
+  .faq summary{cursor:pointer;font-weight:600;font-size:17px;list-style:none;display:flex;justify-content:space-between;align-items:center}
+  .faq summary::after{content:"+";color:var(--muted);font-size:22px}
+  .faq details[open] summary::after{content:"–"}
+  .faq p{color:var(--muted);margin-top:10px;max-width:760px}
+  footer{border-top:1px solid var(--line);padding:36px 0;color:var(--muted);font-size:14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+  .note{font-size:13px;color:var(--muted);margin-top:12px}
+  @media (max-width:640px){nav ul{display:none}.hero{padding:56px 0 40px}section{padding:48px 0}}
+</style>
+</head>
+<body>
+<header><div class="wrap"><nav>
+  <a class="logo" href="#"><svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="20" fill="#0f172a"/><path d="M50 18 L78 30 V52 C78 68 66 79 50 84 C34 79 22 68 22 52 V30 Z" fill="#22c55e"/><path d="M38 52 L47 61 L64 42" stroke="#0f172a" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>SafeRoom</a>
+  <ul><li><a href="#how">How it works</a></li><li><a href="#why">Why</a></li><li><a href="#install">Install</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#faq">FAQ</a></li><li><a href="https://github.com/kascadeceo/saferoom">GitHub</a></li></ul>
+</nav></div></header>
+
+<main>
+<section class="hero" style="border-top:0"><div class="wrap">
+  <span class="eyebrow">Open source · MIT · one Python file · zero dependencies</span>
+  <h1>The sign-off layer for AI coding agents.</h1>
+  <p class="sub">Cloud sandboxes solve <em>where</em> agent code runs. SafeRoom solves <em>what ships</em>. Sandbox, audit, approve — nothing reaches your real repo until you've seen the diff.</p>
+  <div class="cta">
+    <a class="btn btn-primary" href="#install">Install in 60 seconds</a>
+    <a class="btn btn-ghost" href="https://github.com/kascadeceo/saferoom">Read the source on GitHub</a>
+  </div>
+  <div class="flow">your repo ──clone──▶ <b>sandbox container</b> ──agent works──▶ <b>audit report</b> ──<span class="g">you approve</span>──▶ your repo
+                     <span class="a">(dummy .env, no prod access)</span>        (diff + command log)</div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <h2>How it works</h2>
+  <p class="lead">Four commands. Everything runs on your machine. No account, no telemetry, no cloud.</p>
+  <div class="grid">
+    <div class="card"><h3><span class="num">1</span>saferoom init</h3><p>Scans your <code>.env*</code> files and writes a dummy-credential template plus a tiny config. Real values are never copied.</p></div>
+    <div class="card"><h3><span class="num">2</span>saferoom run</h3><p>Clones the repo into a throwaway Docker container with the dummies mounted as <code>.env</code>. Point your agent at it — or pass the agent command directly. <code>--offline</code> cuts the network entirely.</p></div>
+    <div class="card"><h3><span class="num">3</span>saferoom review</h3><p>An audit report: every file changed, every command the agent ran, the full git diff. It's the artifact you'd want after an incident — produced before one.</p></div>
+    <div class="card"><h3><span class="num">4</span>saferoom approve</h3><p>Git-applies only the reviewed patch to your working tree. <code>.env*</code> files are hard-excluded, even if the agent edited them.</p></div>
+  </div>
+
+  <div class="terminal"><div class="bar"><i></i><i></i><i></i></div><pre><span class="c"># an agent "cleans up" the billing schema inside the sandbox…</span>
+$ saferoom run --offline -- 'psql "$DATABASE_URL" -c "DROP TABLE customers;"'
+<span class="m">[saferoom]</span> session 20260821-201128 — cloning repo into sandbox
+<span class="m">[saferoom]</span> credentials swapped: .env (dummy .env mounted)
+<span class="m">[saferoom]</span> starting container saferoom-20260821-201128 (python:3.12-slim, <span class="a">offline</span>)
+<span class="r">psql: could not connect</span>   <span class="c">← DATABASE_URL was http://saferoom-stub.local; prod never heard about it</span>
+
+$ saferoom review
+<span class="g"># SafeRoom audit — session 20260821-201128</span>
+- Isolation: docker (network: none)
+- Credentials swapped: .env
+## Commands run in sandbox
+<span class="r">psql "$DATABASE_URL" -c "DROP TABLE customers;"</span>
+## Files changed
+A   migrations/001_cleanup.sql
+## Full diff
+<span class="g">+DROP TABLE customers;</span>
+<span class="c"># your call. `saferoom approve` applies it — or you don't.</span></pre></div>
+</div></section>
+
+<section id="why"><div class="wrap">
+  <h2>Why</h2>
+  <p class="lead">Nearly half of AI-generated code fails security tests (Veracode, 2025). Claude Code and Cursor can refactor your whole backend from one prompt — and one hallucinated migration can drop your production tables. Every "the agent wrecked prod" story has the same shape:</p>
+  <div class="grid">
+    <div class="card"><h3>The agent had <em>real</em> credentials</h3><p>SafeRoom swaps every <code>.env</code> value for a generated dummy before the clone is mounted. The real values never enter the container.</p></div>
+    <div class="card"><h3>The agent had a <em>live</em> target</h3><p>The sandbox is a throwaway clone. Add <code>--offline</code> and the container has no network at all. Your working tree is untouched until you approve.</p></div>
+    <div class="card"><h3>The human reviewed the <em>damage</em>, not the diff</h3><p>SafeRoom flips the order: command log + diff first, then a required sign-off. The review is the product, not an afterthought.</p></div>
+  </div>
+  <h2 style="margin-top:56px;font-size:22px">Guarantees</h2>
+  <ul class="checks" style="margin-top:16px">
+    <li><b>Real credential values never enter the container</b> — only generated dummies do.</li>
+    <li><b><code>approve</code> never writes <code>.env*</code> back</b>, even if the agent edited them.</li>
+    <li><b>Throwaway clone</b> — your working tree is untouched until approval.</li>
+    <li><b>Everything is local.</b> No telemetry, no account, no cloud.</li>
+    <li><b>One readable file.</b> Stdlib-only Python 3.8+. If you can read <code>saferoom.py</code> in one sitting — and you can — you know exactly what runs on your machine.</li>
+    <li><b>Works with what you already use.</b> E2B, Modal, Daytona, Claude Code's <code>/sandbox</code>, Cursor — SafeRoom is the sign-off layer above them, not a replacement.</li>
+  </ul>
+</div></section>
+
+<section id="install"><div class="wrap">
+  <h2>Install</h2>
+  <p class="lead">Linux (Debian/Ubuntu) first. macOS: install Docker Desktop, then run the installer.</p>
+<pre class="code"><span class="c"># Debian / Ubuntu</span>
+sudo apt-get update &amp;&amp; sudo apt-get install -y git python3 docker.io
+git clone https://github.com/kascadeceo/saferoom &amp;&amp; cd saferoom
+sudo ./install.sh
+
+<span class="c"># then, in any project</span>
+cd your-project
+saferoom init                  <span class="c"># dummy-credential template + config</span>
+saferoom run                   <span class="c"># interactive sandbox shell — point your agent here</span>
+saferoom run -- claude -p "refactor the billing module"   <span class="c"># or one-shot</span>
+saferoom review                <span class="c"># files changed, commands run, full diff</span>
+saferoom approve               <span class="c"># apply the reviewed patch (.env* always excluded)</span></pre>
+  <p class="note">Single-file Python, stdlib only. <a href="https://github.com/kascadeceo/saferoom/blob/main/saferoom.py">Read saferoom.py</a> before you run it — that's the point.</p>
+</div></section>
+
+<section id="pricing"><div class="wrap">
+  <h2>Pricing</h2>
+  <p class="lead">The CLI is MIT-licensed and fully functional forever. A hosted Pro tier funds development.</p>
+  <div class="pricing">
+    <div class="plan">
+      <div class="tag">Open source</div><h3>SafeRoom CLI</h3>
+      <div class="price">$0 <small>forever · MIT</small></div>
+      <ul><li>Credential-stripped Docker sandbox</li><li>Command log + full diff audit</li><li><code>--offline</code> network isolation</li><li>Approve gate with <code>.env*</code> exclusion</li><li>Fully local, no account</li></ul>
+      <a class="btn btn-ghost" href="https://github.com/kascadeceo/saferoom">Get it on GitHub</a>
+    </div>
+    <div class="plan pro">
+      <div class="tag">Coming soon</div><h3>SafeRoom Pro</h3>
+      <div class="price">$49 <small>/ month</small></div>
+      <ul><li>Hosted session history</li><li>CI hooks — gate merges on a reviewed audit</li><li>Compliance-mode logs (HIPAA / SOC 2 evidence format)</li><li>Priority support</li></ul>
+      <a class="btn btn-primary" href="mailto:security@kascadesecurity.com?subject=SafeRoom%20early%20access">Get early access</a>
+      <p class="note">Early-access pricing locked in for the life of your subscription.</p>
+    </div>
+  </div>
+</div></section>
+
+<section id="faq"><div class="wrap faq">
+  <h2 style="margin-bottom:24px">FAQ</h2>
+  <details><summary>Why not just use git branches?</summary><p>Branches don't stop an agent from reading your <code>.env</code> and hitting prod APIs during the run. SafeRoom's point isn't the diff — it's that the run itself happens against dummies, offline if you want, and the diff is the only thing that can come back.</p></details>
+  <details><summary>Docker isn't a security boundary.</summary><p>Agreed, for hostile code — that's what gVisor and Firecracker platforms are for. The threat model here is a well-intentioned agent making a catastrophic mistake with your credentials and your prod, not a jailbroken model escaping a kernel. For hostile-code isolation, run SafeRoom on top of a microVM.</p></details>
+  <details><summary>Claude Code already has /sandbox. Cursor has sandbox mode.</summary><p>They do, and they're good. They contain what the agent can touch while it's running. They don't strip your credentials from the clone, produce a standalone audit artifact, or gate application of the result. Different layer — use both.</p></details>
+  <details><summary>What does it NOT catch yet?</summary><p>The MVP captures filesystem and command activity via git and shell history. Database-mutation capture (a disposable Postgres/MySQL in the sandbox network with query logging) and API-call interception are next on the roadmap — not in the box today. <code>--offline</code> gives you <code>--network none</code> if you want the agent fully dark in the meantime.</p></details>
+  <details><summary>Where do I report a security issue?</summary><p>Don't open a public issue. Email <a href="mailto:security@kascadesecurity.com">security@kascadesecurity.com</a> — you'll get a response within 48 hours. We especially want to hear where the credential-swap heuristics or the approve gate can be beaten.</p></details>
+</div></section>
+</main>
+
+<footer><div class="wrap" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
+  <span>Built by <a href="https://www.kascadesecurity.com">Kascade Security</a>. MIT licensed.</span>
+  <span><a href="https://github.com/kascadeceo/saferoom">GitHub</a> · <a href="https://github.com/kascadeceo/saferoom/blob/main/CONTRIBUTING.md">Contributing</a> · <a href="mailto:security@kascadesecurity.com">Contact</a></span>
+</div></footer>
+</body>
+</html>
