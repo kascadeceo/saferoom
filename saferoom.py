@@ -101,14 +101,25 @@ def dummy_value(key):
     return "sr-dummy-value"
 
 
+def find_env_files(root):
+    """All .env* files under root, recursively — excluding the SafeRoom
+    template, session state (.saferoom/), and git internals (.git/)."""
+    found = []
+    for p in sorted(root.rglob(".env*")):
+        top = p.relative_to(root).parts[0]
+        if p.is_file() and p.name != ENV_TEMPLATE and top not in (SR_DIR, ".git"):
+            found.append(p)
+    return found
+
+
 def cmd_init(args):
     root = repo_root()
-    env_files = sorted(p for p in root.glob(".env*") if p.is_file() and p.name != ENV_TEMPLATE)
+    env_files = find_env_files(root)
     lines = ["# SafeRoom dummy credentials — mounted into every sandbox as .env",
              "# Real values never enter the container. Edit stand-ins as needed.", ""]
     keys = 0
     for ef in env_files:
-        lines.append(f"# from {ef.name}")
+        lines.append(f"# from {ef.relative_to(root)}")
         for raw in ef.read_text().splitlines():
             s = raw.strip()
             if not s or s.startswith("#") or "=" not in s:
@@ -150,11 +161,10 @@ def clone_repo(root, dest):
 
 
 def swap_credentials(root, sandbox_repo):
-    swapped = []
-    for ef in list(sandbox_repo.glob(".env*")):
-        if ef.is_file() and ef.name != ENV_TEMPLATE:
-            ef.unlink()
-            swapped.append(ef.name)
+    env_files = find_env_files(sandbox_repo)
+    swapped = [str(ef.relative_to(sandbox_repo)) for ef in env_files]
+    for ef in env_files:
+        ef.unlink()
     template = root / ENV_TEMPLATE
     if template.exists():
         shutil.copy(template, sandbox_repo / ".env")
