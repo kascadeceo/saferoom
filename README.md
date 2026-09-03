@@ -67,6 +67,7 @@ saferoom approve               # git-apply the reviewed patch (.env* always excl
 | `saferoom review [session]` | Print the audit report |
 | `saferoom approve [session]` | Apply the session patch to your working tree |
 | `saferoom sessions` | List past sessions |
+| `saferoom clean` | Delete oldest sessions, keep the newest 10 (`--keep N` to change); reports space freed |
 
 ## Guarantees
 

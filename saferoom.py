@@ -12,6 +12,7 @@ Usage:
   saferoom review [SESSION]          Show the audit report for a session
   saferoom approve [SESSION]         Apply the approved diff to your real repo
   saferoom sessions                  List past sessions
+  saferoom clean [--keep N]          Remove old sessions, keep the newest N (default 10)
 
 Run options:
   --image IMAGE      Docker image for the sandbox (default: from config, else python:3.12-slim)
@@ -33,6 +34,8 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+__version__ = "0.1.0"
 
 SR_DIR = ".saferoom"
 CONFIG_FILE = "saferoom.json"
@@ -393,11 +396,31 @@ def cmd_sessions(args):
         print(f"{p.name}   files changed: {n}")
 
 
+def cmd_clean(args):
+    root = repo_root()
+    d = root / SR_DIR / "sessions"
+    if not d.exists():
+        say("no sessions yet — nothing to clean")
+        return
+    dirs = sorted(p for p in d.iterdir() if p.is_dir())
+    keep = max(args.keep, 0)
+    doomed = dirs if keep == 0 else dirs[:-keep]
+    if not doomed:
+        say(f"nothing to clean — {len(dirs)} session(s) on disk, keeping {keep}")
+        return
+    freed = sum(os.path.getsize(f) for p in doomed for f in p.rglob("*") if f.is_file())
+    for p in doomed:
+        shutil.rmtree(p)
+    say(f"removed {len(doomed)} session(s), kept the newest {keep} — "
+        f"{freed / 1048576:.1f} MiB freed", "g")
+
+
 # ---------------------------------------------------------------- main
 
 def main():
     ap = argparse.ArgumentParser(prog="saferoom", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=f"saferoom {__version__}")
     sub = ap.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="prepare config + dummy-credential template")
@@ -417,9 +440,14 @@ def main():
 
     sub.add_parser("sessions", help="list sessions")
 
+    cp = sub.add_parser("clean", help="remove old sessions, keep the newest N")
+    cp.add_argument("--keep", type=int, default=10, metavar="N",
+                    help="how many newest sessions to keep (default: 10)")
+
     args = ap.parse_args()
     {"init": cmd_init, "run": cmd_run, "review": cmd_review,
-     "approve": cmd_approve, "sessions": cmd_sessions}[args.command](args)
+     "approve": cmd_approve, "sessions": cmd_sessions,
+     "clean": cmd_clean}[args.command](args)
 
 
 if __name__ == "__main__":
