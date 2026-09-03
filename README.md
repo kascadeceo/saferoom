@@ -18,8 +18,7 @@ your repo ──clone──▶ sandbox container ──agent works──▶ audi
                      (dummy .env, no prod access)       (diff + command log)
 ```
 
-<!-- DEMO: record with `vhs` or asciinema — agent tries DROP TABLE, SafeRoom catches it -->
-<!-- ![demo](docs/demo.gif) -->
+![demo — agent tries DROP TABLE, SafeRoom catches it in the audit](docs/demo.gif)
 
 ## Why
 
