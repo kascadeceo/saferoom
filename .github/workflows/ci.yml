@@ -27,6 +27,9 @@ jobs:
           python $GITHUB_WORKSPACE/saferoom.py approve
           test -f new.txt
           grep -q 'real-secret' .env                 # real .env untouched
+          test -f .saferoom/sessions/*/approvals.jsonl   # approval evidence recorded
+          recorded=$(python -c "import glob, json; p = sorted(glob.glob('.saferoom/sessions/*/approvals.jsonl'))[-1]; print(json.loads(open(p).read().splitlines()[-1])['patch_sha256'])")
+          test "$recorded" = "$(sha256sum .saferoom/sessions/*/changes.patch | cut -d' ' -f1)"  # evidence hash matches the applied patch
       - name: Docker smoke test
         run: |
           mkdir /tmp/demo2 && cd /tmp/demo2 && git init -q
