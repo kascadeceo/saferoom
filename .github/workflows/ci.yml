@@ -10,6 +10,11 @@ jobs:
           python-version: "3.12"
       - name: Syntax check
         run: python -m py_compile saferoom.py
+      - name: Version check
+        run: |
+          v=$(python $GITHUB_WORKSPACE/saferoom.py --version)
+          echo "$v"
+          echo "$v" | grep -Eq '^saferoom [0-9]+\.[0-9]+\.[0-9]+$'   # exits 0 only for a semver string
       - name: Smoke test (local mode)
         run: |
           git config --global user.email ci@saferoom.local
