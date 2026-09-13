@@ -24,6 +24,7 @@ git-based diff auditing. Linux-first (Debian/Ubuntu), works anywhere Docker runs
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -371,6 +372,40 @@ def cmd_review(args):
     print(report.read_text())
 
 
+def host_git_config(root, key, fallback):
+    """Read the host user's git config value (fallback if unset)."""
+    out = sh(["git", "config", "--get", key], cwd=root, check=False).stdout.strip()
+    return out or fallback
+
+
+def record_approval(root, session, patch):
+    """Append the approval evidence: who approved, when, exactly what (patch hash)."""
+    digest = hashlib.sha256(patch.read_bytes()).hexdigest()
+    name = host_git_config(root, "user.name", os.environ.get("USER", "unknown"))
+    email = host_git_config(root, "user.email", "unknown")
+    approved_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    files_changed = sum(1 for line in patch.read_text().splitlines()
+                        if line.startswith("diff --git "))
+    record = {
+        "session": session,
+        "approved_utc": approved_utc,
+        "approver_name": name,
+        "approver_email": email,
+        "patch_sha256": digest,
+        "files_changed_count": files_changed,
+    }
+    session_dir = patch.parent
+    with (session_dir / "approvals.jsonl").open("a") as f:
+        f.write(json.dumps(record) + "\n")
+    report = session_dir / "report.md"
+    if report.exists():
+        lead = "" if report.read_text().endswith("\n") else "\n"
+        with report.open("a") as f:
+            f.write(f"{lead}**Approved** by {name} at {approved_utc} — "
+                    f"patch sha256 {digest}\n")
+    return digest
+
+
 def cmd_approve(args):
     root = repo_root()
     session = args.session or latest_session(root)
@@ -384,8 +419,11 @@ def cmd_approve(args):
         die(f"patch does not apply cleanly:\n{e.stderr.strip()}",
             "review the diff and apply hunks manually, or re-run against a clean tree")
     sh(["git", "apply", *excludes, str(patch)], cwd=root)
+    digest = record_approval(root, session, patch)
     say(f"session {session} approved — changes applied to your working tree "
         "(env files excluded)", "g")
+    say(f"evidence recorded: patch sha256 {digest} "
+        f"→ .saferoom/sessions/{session}/approvals.jsonl", "g")
     say("review with git diff, then commit when satisfied.")
 
 
