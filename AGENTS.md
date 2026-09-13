@@ -23,8 +23,10 @@ launch/                      # founder's marketing playbook — NEVER commit or 
 - **run helpers**: `clone_repo`, `swap_credentials`, `baseline_commit`,
   `IN_CONTAINER_SHELL`, `collect_audit`, `take_screenshot`
 - **cmd_run**: session lifecycle (clone → swap → baseline → container → audit)
-- **review / approve / sessions**: report rendering and the git-apply gate
-- `main()`: argparse wiring
+- **review / approve / sessions / clean**: report rendering, the git-apply gate
+  (with approval evidence: approver, UTC timestamp, patch sha256 → `approvals.jsonl`),
+  session listing, and `clean --keep N` session pruning
+- `main()`: argparse wiring (`--version` reads `__version__` near the top of the file)
 
 ## Non-negotiable invariants
 
