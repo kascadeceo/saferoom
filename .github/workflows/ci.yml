@@ -21,36 +21,55 @@ jobs:
           git config --global user.name CI
           mkdir /tmp/demo && cd /tmp/demo && git init -q
           printf 'API_KEY=real-secret\nDB_URL=postgres://real@prod/db\n' > .env
-          mkdir -p backend && printf 'NESTED_KEY=real-nested-secret\n' > backend/.env
+          mkdir -p services/api && printf 'NESTED_KEY=real-nested-secret\n' > services/api/.env.production
           printf 'print("hi")\n' > app.py
           git add -A && git commit -qm init
           python $GITHUB_WORKSPACE/saferoom.py init
           grep -q 'sr-dummy' .env.saferoom
-          grep -q '# from backend/.env' .env.saferoom   # nested files captured in template
-          python $GITHUB_WORKSPACE/saferoom.py run --local -- "echo new > new.txt && cat .env" | tee out.log
+          grep -q '# from services/api/.env.production' .env.saferoom
+          python $GITHUB_WORKSPACE/saferoom.py run --local -- "cat .env; echo new > new.txt; printf 'AGENT=root\n' > .env; mkdir -p services/api nested/.saferoom; printf 'AGENT=nested\n' > services/api/.env.production; printf hidden > nested/.saferoom/state" | tee out.log
           grep -q 'sr-dummy-secret' out.log          # agent saw dummies, not real creds
           ! grep -q 'real-secret' out.log            # real secret never leaked
           ! grep -q 'real-nested-secret' out.log     # nested secret never leaked either
           python $GITHUB_WORKSPACE/saferoom.py review | grep -q 'new.txt'
-          python $GITHUB_WORKSPACE/saferoom.py review | grep -q 'Credentials swapped:.*backend/\.env'
+          python $GITHUB_WORKSPACE/saferoom.py review | grep -q 'Credentials swapped:.*services/api/\.env.production'
+          patch=$(echo .saferoom/sessions/*/changes.patch)
+          ! grep -Eq '(^|/)\.env|\.saferoom' "$patch"
           python $GITHUB_WORKSPACE/saferoom.py approve
           test -f new.txt
           grep -q 'real-secret' .env                 # real .env untouched
-          grep -q 'real-nested-secret' backend/.env  # real nested .env untouched
+          grep -q 'real-nested-secret' services/api/.env.production
+          test ! -e nested/.saferoom/state
           test -f .saferoom/sessions/*/approvals.jsonl   # approval evidence recorded
           recorded=$(python -c "import glob, json; p = sorted(glob.glob('.saferoom/sessions/*/approvals.jsonl'))[-1]; print(json.loads(open(p).read().splitlines()[-1])['patch_sha256'])")
           test "$recorded" = "$(sha256sum .saferoom/sessions/*/changes.patch | cut -d' ' -f1)"  # evidence hash matches the applied patch
+      - name: Reject tampered protected-path patch
+        run: |
+          mkdir /tmp/tamper && cd /tmp/tamper && git init -q
+          printf 'print("safe")\n' > app.py
+          git add -A && git commit -qm init
+          python $GITHUB_WORKSPACE/saferoom.py init
+          python $GITHUB_WORKSPACE/saferoom.py run --local -- "echo reviewed > safe.txt"
+          patch=$(echo .saferoom/sessions/*/changes.patch)
+          printf '%s\n' 'diff --git a/services/.env.backdoor b/services/.env.backdoor' 'new file mode 100644' '--- /dev/null' '+++ b/services/.env.backdoor' '@@ -0,0 +1 @@' '+SECRET=tampered' >> "$patch"
+          if python $GITHUB_WORKSPACE/saferoom.py approve > approve.out 2>&1; then
+            echo 'tampered protected-path patch was accepted' >&2
+            exit 1
+          fi
+          grep -q 'patch touches protected path' approve.out
+          test ! -e safe.txt
+          test ! -e services/.env.backdoor
       - name: Docker smoke test
         run: |
           mkdir /tmp/demo2 && cd /tmp/demo2 && git init -q
           printf 'API_KEY=real-secret\n' > .env
-          mkdir -p backend && printf 'NESTED_KEY=docker-nested-secret\n' > backend/.env
+          mkdir -p services/api && printf 'NESTED_KEY=docker-nested-secret\n' > services/api/.env.production
           git add -A && git commit -qm init
           python $GITHUB_WORKSPACE/saferoom.py init
-          python $GITHUB_WORKSPACE/saferoom.py run --offline --image python:3.12-slim -- "echo boxed > box.txt && cat .env; cat backend/.env || echo nested-env-absent" | tee docker.out
+          python $GITHUB_WORKSPACE/saferoom.py run --offline --image python:3.12-slim -- "echo boxed > box.txt && cat .env; cat services/api/.env.production || echo nested-env-absent" | tee docker.out
           grep -q 'sr-dummy-secret' docker.out           # container saw dummies only
           ! grep -q 'real-secret' docker.out             # root secret never entered container
           ! grep -q 'docker-nested-secret' docker.out    # nested secret never entered container
           grep -q 'nested-env-absent' docker.out         # nested .env deleted before start
           python $GITHUB_WORKSPACE/saferoom.py review | grep -q 'box.txt'
-          python $GITHUB_WORKSPACE/saferoom.py review | grep -q 'Credentials swapped:.*backend/\.env'
+          python $GITHUB_WORKSPACE/saferoom.py review | grep -q 'Credentials swapped:.*services/api/\.env.production'
