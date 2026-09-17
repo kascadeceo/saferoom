@@ -205,6 +205,29 @@ IN_CONTAINER_SHELL = (
 )
 
 
+def render_audit_report(meta, names, stat, commands, diff):
+    lines = [
+        f"# SafeRoom audit — session {meta['session']}", "",
+        f"- Started:  {meta['started_utc']}",
+        f"- Finished: {meta['finished_utc']}",
+        f"- Isolation: {meta['isolation']}",
+        f"- Image: {meta.get('image', '—')}",
+        f"- Credentials swapped: {', '.join(meta['credentials_swapped']) or 'none found'}",
+        "", "## Files changed", "```", names.strip() or "(no changes)", "",
+        stat.strip(), "```", "",
+    ]
+    warnings = meta.get("review_warnings", [])
+    if warnings:
+        lines += ["## Review warnings", *(f"- **{warning}**" for warning in warnings), ""]
+    lines += [
+        "## Commands run in sandbox", "```",
+        commands.strip() or "(no shell history captured)", "```", "",
+        "## Full diff", "```diff", diff.strip() or "(empty)", "```", "",
+        f"Approve with:  saferoom approve {meta['session']}",
+    ]
+    return "\n".join(lines)
+
+
 def collect_audit(sandbox_repo, base, session_dir, meta):
     sh(["git", "add", "-A"], cwd=sandbox_repo)
     changed = sh(["git", "diff", "--cached", "--name-only", "-z", "--no-renames", base],
@@ -227,42 +250,17 @@ def collect_audit(sandbox_repo, base, session_dir, meta):
     if commands:
         cmd_log.write_text(commands)
 
+    warnings = []
+    if "GIT binary patch" in diff or re.search(r"^Binary files ", diff, re.M):
+        warnings.append("Binary content is encoded in changes.patch; inspect it before approval.")
     meta.update({
         "finished_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "files_changed": [l for l in names.splitlines() if l.strip()],
+        "review_warnings": warnings,
     })
     (session_dir / "report.json").write_text(json.dumps(meta, indent=2) + "\n")
-
-    lines = [
-        f"# SafeRoom audit — session {meta['session']}",
-        "",
-        f"- Started:  {meta['started_utc']}",
-        f"- Finished: {meta['finished_utc']}",
-        f"- Isolation: {meta['isolation']}",
-        f"- Image: {meta.get('image', '—')}",
-        f"- Credentials swapped: {', '.join(meta['credentials_swapped']) or 'none found'}",
-        "",
-        "## Files changed",
-        "```",
-        names.strip() or "(no changes)",
-        "",
-        stat.strip(),
-        "```",
-        "",
-        "## Commands run in sandbox",
-        "```",
-        commands.strip() or "(no shell history captured)",
-        "```",
-        "",
-        "## Full diff",
-        "```diff",
-        diff.strip() or "(empty)",
-        "```",
-        "",
-        f"Approve with:  saferoom approve {meta['session']}",
-    ]
     report = session_dir / "report.md"
-    report.write_text("\n".join(lines))
+    report.write_text(render_audit_report(meta, names, stat, commands, diff))
     return report, names
 
 

@@ -59,6 +59,28 @@ jobs:
           grep -q 'patch touches protected path' approve.out
           test ! -e safe.txt
           test ! -e services/.env.backdoor
+      - name: Red-team review artifact
+        run: |
+          mkdir /tmp/redteam && cd /tmp/redteam && git init -q
+          printf 'plain\n' > plain.txt
+          printf 'spaced\n' > 'file with spaces.txt'
+          printf 'old-binary\n' > binary.bin
+          git add -A && git commit -qm init
+          python $GITHUB_WORKSPACE/saferoom.py init
+          python $GITHUB_WORKSPACE/saferoom.py run --local -- "mv plain.txt .env.renamed; printf changed > 'file with spaces.txt'; mkdir nested; ln -s ../plain.txt nested/.env.link; printf '*.masked -diff\n' > .gitattributes; printf masked > secret.masked; printf '\\000\\001changed' > binary.bin"
+          patch=$(echo .saferoom/sessions/*/changes.patch)
+          report=$(echo .saferoom/sessions/*/report.md)
+          ! grep -Eq '\.env\.renamed|nested/\.env\.link' "$patch"
+          grep -q 'plain.txt' "$patch"                 # safe side of rename is disclosed
+          grep -q 'file with spaces.txt' "$patch"      # quoted path remains reviewable
+          grep -q 'GIT binary patch' "$patch"          # full binary payload is retained
+          grep -q 'Binary content is encoded' "$report" # ambiguity is prominent
+          python $GITHUB_WORKSPACE/saferoom.py approve
+          test ! -e plain.txt
+          test ! -e .env.renamed
+          test ! -e nested/.env.link
+          grep -q changed 'file with spaces.txt'
+          test -f .gitattributes && test -f secret.masked
       - name: Docker smoke test
         run: |
           mkdir /tmp/demo2 && cd /tmp/demo2 && git init -q
