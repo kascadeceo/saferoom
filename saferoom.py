@@ -105,13 +105,21 @@ def dummy_value(key):
     return "sr-dummy-value"
 
 
+def is_protected_path(path):
+    """True for any .env* file or anything inside a .saferoom directory."""
+    parts = Path(path).parts
+    return SR_DIR in parts or bool(parts and parts[-1].startswith(".env"))
+
+
 def find_env_files(root):
     """All .env* files under root, recursively — excluding the SafeRoom
     template, session state (.saferoom/), and git internals (.git/)."""
     found = []
     for p in sorted(root.rglob(".env*")):
-        top = p.relative_to(root).parts[0]
-        if p.is_file() and p.name != ENV_TEMPLATE and top not in (SR_DIR, ".git"):
+        relative = p.relative_to(root)
+        if (p.is_file() and p.name != ENV_TEMPLATE
+                and is_protected_path(relative)
+                and SR_DIR not in relative.parts and ".git" not in relative.parts):
             found.append(p)
     return found
 
@@ -199,10 +207,18 @@ IN_CONTAINER_SHELL = (
 
 def collect_audit(sandbox_repo, base, session_dir, meta):
     sh(["git", "add", "-A"], cwd=sandbox_repo)
-    spec = ["--", ".", f":!{SR_DIR}", ":!.env", ":!.env.*"]
-    diff = sh(["git", "diff", "--cached", base, *spec], cwd=sandbox_repo).stdout
-    stat = sh(["git", "diff", "--cached", "--stat", base, *spec], cwd=sandbox_repo).stdout
-    names = sh(["git", "diff", "--cached", "--name-status", base, *spec], cwd=sandbox_repo).stdout
+    changed = sh(["git", "diff", "--cached", "--name-only", "-z", "--no-renames", base],
+                 cwd=sandbox_repo).stdout.split("\0")
+    safe_paths = [path for path in changed if path and not is_protected_path(path)]
+    spec = ["--", *(f":(literal){path}" for path in safe_paths)]
+    common = ["git", "diff", "--cached", "--no-ext-diff", "--no-textconv",
+              "--no-renames"]
+    diff = sh([*common, "--binary", "--full-index", base, *spec],
+              cwd=sandbox_repo).stdout if safe_paths else ""
+    stat = sh([*common, "--stat", base, *spec],
+              cwd=sandbox_repo).stdout if safe_paths else ""
+    names = sh([*common, "--name-status", base, *spec],
+               cwd=sandbox_repo).stdout if safe_paths else ""
 
     (session_dir / "changes.patch").write_text(diff)
     hist = sandbox_repo / SR_DIR / "history"
@@ -409,13 +425,54 @@ def record_approval(root, session, patch):
     return digest
 
 
+def patch_paths(root, patch):
+    """Apply to a disposable index and return every old/new path touched."""
+    index = patch.parent / ".approval.index"
+    env = {"GIT_INDEX_FILE": str(index)}
+    source = Path(sh(["git", "rev-parse", "--git-path", "index"],
+                     cwd=root).stdout.strip())
+    if not source.is_absolute():
+        source = root / source
+    if source.exists():
+        shutil.copyfile(source, index)
+    try:
+        sh(["git", "add", "-A"], cwd=root, env=env)
+        before = sh(["git", "write-tree"], cwd=root, env=env).stdout.strip()
+        sh(["git", "apply", "--cached", "--check", str(patch)], cwd=root, env=env)
+        sh(["git", "apply", "--cached", str(patch)], cwd=root, env=env)
+        after = sh(["git", "write-tree"], cwd=root, env=env).stdout.strip()
+        raw = sh(["git", "diff-tree", "--no-commit-id", "--name-status", "-z",
+                  "-r", "-M", before, after], cwd=root).stdout
+    finally:
+        index.unlink(missing_ok=True)
+        index.with_name(index.name + ".lock").unlink(missing_ok=True)
+    fields = [field for field in raw.split("\0") if field]
+    paths = []
+    i = 0
+    while i < len(fields):
+        status = fields[i]
+        count = 2 if status[:1] in ("R", "C") else 1
+        paths.extend(fields[i + 1:i + 1 + count])
+        i += count + 1
+    return paths
+
+
 def cmd_approve(args):
     root = repo_root()
     session = args.session or latest_session(root)
     patch = root / SR_DIR / "sessions" / session / "changes.patch"
     if not patch.exists() or not patch.read_text().strip():
         die(f"session {session} has no changes to approve")
-    excludes = ["--exclude=.env", "--exclude=.env.*", f"--exclude={SR_DIR}/*"]
+    try:
+        protected = [path for path in patch_paths(root, patch) if is_protected_path(path)]
+    except subprocess.CalledProcessError as e:
+        die(f"patch does not apply cleanly:\n{e.stderr.strip()}",
+            "review the diff and apply hunks manually, or re-run against a clean tree")
+    if protected:
+        die(f"patch touches protected path: {protected[0]}",
+            "protected .env* and .saferoom paths cannot be approved; re-run the session")
+    excludes = ["--exclude=.env*", "--exclude=*/.env*",
+                f"--exclude={SR_DIR}/**", f"--exclude=*/{SR_DIR}/**"]
     try:
         sh(["git", "apply", "--check", *excludes, str(patch)], cwd=root)
     except subprocess.CalledProcessError as e:
