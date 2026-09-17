@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import shlex
 import shutil
 import subprocess
@@ -196,6 +197,28 @@ def docker_available():
     return shutil.which("docker") is not None
 
 
+def tee_process(cmd, transcript, cwd=None, env=None):
+    """Stream both child output channels while preserving a merged byte transcript."""
+    process = subprocess.Popen(
+        cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    streams = selectors.DefaultSelector()
+    streams.register(process.stdout, selectors.EVENT_READ, sys.stdout.buffer)
+    streams.register(process.stderr, selectors.EVENT_READ, sys.stderr.buffer)
+    with transcript.open("wb") as log:
+        while streams.get_map():
+            for key, _ in streams.select():
+                chunk = os.read(key.fileobj.fileno(), 4096)
+                if not chunk:
+                    streams.unregister(key.fileobj)
+                    continue
+                key.data.write(chunk)
+                key.data.flush()
+                log.write(chunk)
+                log.flush()
+    streams.close()
+    return process.wait()
+
+
 IN_CONTAINER_SHELL = (
     'export HISTFILE=/workspace/{sr}/history; export HISTTIMEFORMAT="%F %T  "; '
     'export PROMPT_COMMAND="history -a"; '
@@ -212,6 +235,7 @@ def render_audit_report(meta, names, stat, commands, diff):
         f"- Finished: {meta['finished_utc']}",
         f"- Isolation: {meta['isolation']}",
         f"- Image: {meta.get('image', '—')}",
+        f"- Exit code: {meta.get('exit_code', '—')}",
         f"- Credentials swapped: {', '.join(meta['credentials_swapped']) or 'none found'}",
         "", "## Files changed", "```", names.strip() or "(no changes)", "",
         stat.strip(), "```", "",
@@ -219,9 +243,16 @@ def render_audit_report(meta, names, stat, commands, diff):
     warnings = meta.get("review_warnings", [])
     if warnings:
         lines += ["## Review warnings", *(f"- **{warning}**" for warning in warnings), ""]
+    entrypoint = meta.get("submitted_entrypoint")
     lines += [
-        "## Commands run in sandbox", "```",
-        commands.strip() or "(no shell history captured)", "```", "",
+        "## Submitted one-shot entrypoint", "```",
+        entrypoint or "(interactive session)", "```", "",
+        "## Interactive shell history", "```",
+        commands.strip() or "(not captured for a one-shot run)", "```", "",
+    ]
+    if meta.get("transcript"):
+        lines += ["## Captured transcript", "Full stdout/stderr: `transcript.log`", ""]
+    lines += [
         "## Full diff", "```diff", diff.strip() or "(empty)", "```", "",
         f"Approve with:  saferoom approve {meta['session']}",
     ]
@@ -283,6 +314,44 @@ def take_screenshot(url, session_dir):
 
 # ---------------------------------------------------------------- run
 
+def run_local(args, sandbox_repo, transcript):
+    say("LOCAL MODE — no container isolation. Testing only.", "y")
+    env = os.environ.copy()
+    env["HISTFILE"] = str(sandbox_repo / SR_DIR / "history")
+    if args.cmd:
+        return tee_process(["bash", "-lc", " ".join(args.cmd)], transcript,
+                           cwd=sandbox_repo, env=env)
+    say("interactive sandbox shell — exit to finish and audit")
+    result = subprocess.run(
+        ["bash", "-c", f'export HISTFILE="{env["HISTFILE"]}"; '
+         'export PROMPT_COMMAND="history -a"; exec bash -i'],
+        cwd=sandbox_repo, env=env)
+    return result.returncode
+
+
+def run_docker(args, sandbox_repo, transcript, session, image, offline):
+    name = f"saferoom-{session}"
+    run_cmd = ["docker", "run", "-d", "--name", name,
+               "-v", f"{sandbox_repo}:/workspace", "-w", "/workspace"]
+    if offline:
+        run_cmd += ["--network", "none"]
+    run_cmd += [image, "sleep", "infinity"]
+    say(f"starting container {name} ({image}{', offline' if offline else ''})")
+    try:
+        sh(run_cmd)
+        if args.cmd:
+            joined = " ".join(args.cmd)
+            say(f"running: {joined}")
+            return tee_process(
+                ["docker", "exec", name, "bash", "-lc", joined], transcript)
+        say("interactive sandbox shell — exit to finish and audit")
+        shell = IN_CONTAINER_SHELL.format(sr=SR_DIR)
+        return subprocess.run(
+            ["docker", "exec", "-it", name, "bash", "-c", shell]).returncode
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
+
+
 def cmd_run(args):
     root = repo_root()
     cfg = load_config(root)
@@ -292,6 +361,7 @@ def cmd_run(args):
     session = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     session_dir = root / SR_DIR / "sessions" / session
     sandbox_repo = session_dir / "repo"
+    transcript = session_dir / "transcript.log"
     session_dir.mkdir(parents=True, exist_ok=True)
 
     say(f"session {session} — cloning repo into sandbox")
@@ -302,6 +372,9 @@ def cmd_run(args):
     say(f"credentials swapped: {', '.join(swapped) or 'none found'} "
         f"({'dummy .env mounted' if (sandbox_repo / '.env').exists() else 'no .env in sandbox'})")
 
+    entrypoint = " ".join(args.cmd) if args.cmd else None
+    if entrypoint:
+        (session_dir / "entrypoint.log").write_text(entrypoint + "\n")
     meta = {
         "session": session,
         "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -310,51 +383,21 @@ def cmd_run(args):
         "isolation": "none (--local, testing only)" if args.local
                      else f"docker ({'network: none' if offline else 'network: bridge'})",
         "image": None if args.local else image,
-        "one_shot": args.cmd or None,
+        "submitted_entrypoint": entrypoint,
+        "submitted_argv": args.cmd or None,
+        "transcript": "transcript.log" if args.cmd else None,
     }
 
     if args.local:
-        say("LOCAL MODE — no container isolation. Testing only.", "y")
-        env = os.environ.copy()
-        env["HISTFILE"] = str(sandbox_repo / SR_DIR / "history")
-        if args.cmd:
-            joined = " ".join(args.cmd)
-            (sandbox_repo / SR_DIR / "history").write_text(joined + "\n")
-            subprocess.run(joined, shell=True, cwd=sandbox_repo, env=env)
-        else:
-            say("interactive sandbox shell — exit to finish and audit")
-            subprocess.run(
-                ["bash", "-c",
-                 f'export HISTFILE="{sandbox_repo / SR_DIR / "history"}"; '
-                 'export PROMPT_COMMAND="history -a"; exec bash -i'],
-                cwd=sandbox_repo, env=env)
+        exit_code = run_local(args, sandbox_repo, transcript)
     else:
         if not docker_available():
             die("docker not found.",
                 "Debian/Ubuntu: sudo apt-get update && sudo apt-get install -y docker.io "
                 "(or Docker Engine from docs.docker.com). macOS/Windows: Docker Desktop.")
-        name = f"saferoom-{session}"
-        run_cmd = ["docker", "run", "-d", "--name", name,
-                   "-v", f"{sandbox_repo}:/workspace", "-w", "/workspace"]
-        if offline:
-            run_cmd += ["--network", "none"]
-        run_cmd += [image, "sleep", "infinity"]
-        say(f"starting container {name} ({image}"
-            f"{', offline' if offline else ''})")
-        try:
-            sh(run_cmd)
-            if args.cmd:
-                joined = " ".join(args.cmd)
-                (sandbox_repo / SR_DIR / "history").write_text(joined + "\n")
-                say(f"running: {joined}")
-                subprocess.run(["docker", "exec", name, "bash", "-lc", joined])
-            else:
-                say("interactive sandbox shell — exit to finish and audit")
-                shell = IN_CONTAINER_SHELL.format(sr=SR_DIR)
-                subprocess.run(["docker", "exec", "-it", name, "bash", "-c", shell])
-        finally:
-            subprocess.run(["docker", "rm", "-f", name],
-                           capture_output=True, text=True)
+        exit_code = run_docker(args, sandbox_repo, transcript, session, image, offline)
+
+    meta["exit_code"] = exit_code
 
     if args.screenshot:
         take_screenshot(args.screenshot, session_dir)
@@ -366,6 +409,9 @@ def cmd_run(args):
     print()
     say(f"review:  saferoom review {session}")
     say(f"approve: saferoom approve {session}")
+    if exit_code:
+        say(f"sandbox command exited with status {exit_code}; audit preserved", "r")
+        raise SystemExit(exit_code)
 
 
 # ---------------------------------------------------------------- review / approve / sessions
