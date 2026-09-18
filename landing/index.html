@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SafeRoom — the sign-off layer for AI coding agents</title>
-<meta name="description" content="SafeRoom clones your repo into a credential-stripped Docker sandbox, logs everything your AI agent does, and gates the result behind your approval. Single Python file, MIT, fully local.">
+<meta name="description" content="The free, MIT-licensed SafeRoom CLI sandboxes AI coding agents locally. SafeRoom Pro adds planned team governance, CI policy, and hosted audit history.">
 <meta property="og:title" content="SafeRoom — Sandbox, audit, approve.">
 <meta property="og:description" content="Cloud sandboxes solve where agent code runs. SafeRoom solves what ships.">
 <meta property="og:type" content="website">
@@ -62,6 +62,15 @@
   .plan ul{list-style:none;margin:18px 0 24px;color:var(--muted);display:grid;gap:9px}
   .plan li::before{content:"—";color:var(--green);margin-right:9px}
   .tag{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--green);margin-bottom:8px}
+  .boundary{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .boundary th,.boundary td{padding:16px 18px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+  .boundary tr:last-child td{border-bottom:0}
+  .boundary th{font-size:14px;color:var(--text);background:#0d1526}
+  .boundary td{color:var(--muted);font-size:15px;width:50%}
+  .boundary td:first-child{border-right:1px solid var(--line)}
+  .boundary b{display:block;color:var(--text);margin-bottom:3px}
+  .callout{margin-top:22px;padding:18px 20px;border-left:3px solid var(--green);background:rgba(34,197,94,.07);color:var(--muted)}
+  .callout b{color:var(--text)}
   .faq details{border-top:1px solid var(--line);padding:18px 0}
   .faq details:last-child{border-bottom:1px solid var(--line)}
   .faq summary{cursor:pointer;font-weight:600;font-size:17px;list-style:none;display:flex;justify-content:space-between;align-items:center}
@@ -70,26 +79,26 @@
   .faq p{color:var(--muted);margin-top:10px;max-width:760px}
   footer{border-top:1px solid var(--line);padding:36px 0;color:var(--muted);font-size:14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
   .note{font-size:13px;color:var(--muted);margin-top:12px}
-  @media (max-width:640px){nav ul{display:none}.hero{padding:56px 0 40px}section{padding:48px 0}}
+  @media (max-width:640px){nav ul{display:none}.hero{padding:56px 0 40px}section{padding:48px 0}.boundary th,.boundary td{padding:12px}.boundary{font-size:13px}}
 </style>
 </head>
 <body>
 <header><div class="wrap"><nav>
   <a class="logo" href="#"><svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="20" fill="#0f172a"/><path d="M50 18 L78 30 V52 C78 68 66 79 50 84 C34 79 22 68 22 52 V30 Z" fill="#22c55e"/><path d="M38 52 L47 61 L64 42" stroke="#0f172a" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>SafeRoom</a>
-  <ul><li><a href="#how">How it works</a></li><li><a href="#why">Why</a></li><li><a href="#install">Install</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#faq">FAQ</a></li><li><a href="https://github.com/kascadeceo/saferoom">GitHub</a></li></ul>
+  <ul><li><a href="#how">How it works</a></li><li><a href="#why">Why</a></li><li><a href="#install">Install</a></li><li><a href="#plans">Free vs. Pro</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#faq">FAQ</a></li><li><a href="https://github.com/kascadeceo/saferoom">GitHub</a></li></ul>
 </nav></div></header>
 
 <main>
 <section class="hero" style="border-top:0"><div class="wrap">
   <span class="eyebrow">Open source · MIT · one Python file · zero dependencies</span>
   <h1>The sign-off layer for AI coding agents.</h1>
-  <p class="sub">Cloud sandboxes solve <em>where</em> agent code runs. SafeRoom solves <em>what ships</em>. Sandbox, audit, approve — nothing reaches your real repo until you've seen the diff.</p>
+  <p class="sub">Cloud sandboxes solve <em>where</em> agent code runs. SafeRoom solves <em>what ships</em>. The complete local workflow is free and MIT-licensed; planned Pro services add team governance, not a paywall around safety.</p>
   <div class="cta">
     <a class="btn btn-primary" href="#install">Install in 60 seconds</a>
     <a class="btn btn-ghost" href="https://github.com/kascadeceo/saferoom">Read the source on GitHub</a>
   </div>
   <div class="flow">your repo ──clone──▶ <b>sandbox container</b> ──agent works──▶ <b>audit report</b> ──<span class="g">you approve</span>──▶ your repo
-                     <span class="a">(dummy .env, no prod access)</span>        (diff + command log)</div>
+                     <span class="a">(dummy .env, no prod access)</span>        (transcript + diff)</div>
 </div></section>
 
 <section id="how"><div class="wrap">
@@ -98,7 +107,7 @@
   <div class="grid">
     <div class="card"><h3><span class="num">1</span>saferoom init</h3><p>Scans your <code>.env*</code> files and writes a dummy-credential template plus a tiny config. Real values are never copied.</p></div>
     <div class="card"><h3><span class="num">2</span>saferoom run</h3><p>Clones the repo into a throwaway Docker container with the dummies mounted as <code>.env</code>. Point your agent at it — or pass the agent command directly. <code>--offline</code> cuts the network entirely.</p></div>
-    <div class="card"><h3><span class="num">3</span>saferoom review</h3><p>An audit report: every file changed, every command the agent ran, the full git diff. It's the artifact you'd want after an incident — produced before one.</p></div>
+    <div class="card"><h3><span class="num">3</span>saferoom review</h3><p>An audit report with the submitted one-shot entrypoint or interactive shell history, captured stdout/stderr, changed-file list, and full reviewable git diff.</p></div>
     <div class="card"><h3><span class="num">4</span>saferoom approve</h3><p>Git-applies only the reviewed patch to your working tree. <code>.env*</code> files are hard-excluded, even if the agent edited them.</p></div>
   </div>
 
@@ -113,7 +122,7 @@ $ saferoom review
 <span class="g"># SafeRoom audit — session 20260821-201128</span>
 - Isolation: docker (network: none)
 - Credentials swapped: .env
-## Commands run in sandbox
+## Submitted one-shot entrypoint
 <span class="r">psql "$DATABASE_URL" -c "DROP TABLE customers;"</span>
 ## Files changed
 A   migrations/001_cleanup.sql
@@ -128,7 +137,7 @@ A   migrations/001_cleanup.sql
   <div class="grid">
     <div class="card"><h3>The agent had <em>real</em> credentials</h3><p>SafeRoom swaps every <code>.env</code> value for a generated dummy before the clone is mounted. The real values never enter the container.</p></div>
     <div class="card"><h3>The agent had a <em>live</em> target</h3><p>The sandbox is a throwaway clone. Add <code>--offline</code> and the container has no network at all. Your working tree is untouched until you approve.</p></div>
-    <div class="card"><h3>The human reviewed the <em>damage</em>, not the diff</h3><p>SafeRoom flips the order: command log + diff first, then a required sign-off. The review is the product, not an afterthought.</p></div>
+    <div class="card"><h3>The human reviewed the <em>damage</em>, not the diff</h3><p>SafeRoom flips the order: captured transcript + diff first, then a required sign-off. The review is the product, not an afterthought.</p></div>
   </div>
   <h2 style="margin-top:56px;font-size:22px">Guarantees</h2>
   <ul class="checks" style="margin-top:16px">
@@ -154,27 +163,42 @@ cd your-project
 saferoom init                  <span class="c"># dummy-credential template + config</span>
 saferoom run                   <span class="c"># interactive sandbox shell — point your agent here</span>
 saferoom run -- claude -p "refactor the billing module"   <span class="c"># or one-shot</span>
-saferoom review                <span class="c"># files changed, commands run, full diff</span>
+saferoom review                <span class="c"># entrypoint/history, transcript, files, full diff</span>
 saferoom approve               <span class="c"># apply the reviewed patch (.env* always excluded)</span></pre>
   <p class="note">Single-file Python, stdlib only. <a href="https://github.com/kascadeceo/saferoom/blob/main/saferoom.py">Read saferoom.py</a> before you run it — that's the point.</p>
 </div></section>
 
+<section id="plans"><div class="wrap">
+  <h2>Free locally. Paid when governance becomes a team problem.</h2>
+  <p class="lead">You do not need an account, subscription, or hosted service to sandbox an agent, inspect its work, and approve a patch. SafeRoom Pro is the planned coordination layer for organizations that need one policy and audit trail across many developers and repositories.</p>
+  <table class="boundary">
+    <thead><tr><th>SafeRoom CLI — free and available now</th><th>SafeRoom Pro / Kascade — planned services</th></tr></thead>
+    <tbody>
+      <tr><td><b>Local containment</b>Credential-stripped Docker sandbox with optional offline execution.</td><td><b>Team visibility</b>Centralized approved-session history across developers and repositories.</td></tr>
+      <tr><td><b>Local audit</b>Submitted entrypoint or interactive history, captured transcript, changed-file list, and full diff stored on your machine.</td><td><b>Organization policy</b>CI and repository controls that require reviewed agent work before merge.</td></tr>
+      <tr><td><b>Human sign-off</b>You decide whether to apply the reviewed patch; <code>.env*</code> remains excluded.</td><td><b>Access and key governance</b>Planned SSO, roles, and organization-wide credential-stripping policy.</td></tr>
+      <tr><td><b>No cloud dependency</b>No account, telemetry, hosted control plane, or subscription.</td><td><b>Evidence and support</b>Planned exports for audit programs, plus managed rollout and priority support.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout"><b>The line stays clear:</b> the local <code>init → run → review → approve</code> workflow remains complete, local, and MIT-licensed. Pro coordinates and enforces that workflow across a company.</div>
+</div></section>
+
 <section id="pricing"><div class="wrap">
   <h2>Pricing</h2>
-  <p class="lead">The CLI is MIT-licensed and fully functional forever. A hosted Pro tier funds development.</p>
+  <p class="lead">Use the CLI free forever. Join early access if your team needs shared policy, reporting, and enforcement.</p>
   <div class="pricing">
     <div class="plan">
       <div class="tag">Open source</div><h3>SafeRoom CLI</h3>
       <div class="price">$0 <small>forever · MIT</small></div>
-      <ul><li>Credential-stripped Docker sandbox</li><li>Command log + full diff audit</li><li><code>--offline</code> network isolation</li><li>Approve gate with <code>.env*</code> exclusion</li><li>Fully local, no account</li></ul>
+      <ul><li>Credential-stripped Docker sandbox</li><li>Transcript + full diff audit</li><li><code>--offline</code> network isolation</li><li>Approve gate with <code>.env*</code> exclusion</li><li>Fully local, no account</li></ul>
       <a class="btn btn-ghost" href="https://github.com/kascadeceo/saferoom">Get it on GitHub</a>
     </div>
     <div class="plan pro">
-      <div class="tag">Coming soon</div><h3>SafeRoom Pro</h3>
-      <div class="price">$49 <small>/ month</small></div>
-      <ul><li>Hosted session history</li><li>CI hooks — gate merges on a reviewed audit</li><li>Compliance-mode logs (HIPAA / SOC 2 evidence format)</li><li>Priority support</li></ul>
+      <div class="tag">Planned · early access</div><h3>SafeRoom Pro</h3>
+      <div class="price"><small>from</small> $49 <small>/ month</small></div>
+      <ul><li>Hosted approved-session history</li><li>CI and repository policy enforcement</li><li>Evidence exports for compliance review processes</li><li>Team access controls and priority support</li></ul>
       <a class="btn btn-primary" href="mailto:security@kascadesecurity.com?subject=SafeRoom%20early%20access">Get early access</a>
-      <p class="note">Early-access pricing locked in for the life of your subscription.</p>
+      <p class="note">Planned features and pricing may change before launch. Need a managed rollout? Ask about Kascade Security.</p>
     </div>
   </div>
 </div></section>
@@ -184,7 +208,9 @@ saferoom approve               <span class="c"># apply the reviewed patch (.env*
   <details><summary>Why not just use git branches?</summary><p>Branches don't stop an agent from reading your <code>.env</code> and hitting prod APIs during the run. SafeRoom's point isn't the diff — it's that the run itself happens against dummies, offline if you want, and the diff is the only thing that can come back.</p></details>
   <details><summary>Docker isn't a security boundary.</summary><p>Agreed, for hostile code — that's what gVisor and Firecracker platforms are for. The threat model here is a well-intentioned agent making a catastrophic mistake with your credentials and your prod, not a jailbroken model escaping a kernel. For hostile-code isolation, run SafeRoom on top of a microVM.</p></details>
   <details><summary>Claude Code already has /sandbox. Cursor has sandbox mode.</summary><p>They do, and they're good. They contain what the agent can touch while it's running. They don't strip your credentials from the clone, produce a standalone audit artifact, or gate application of the result. Different layer — use both.</p></details>
-  <details><summary>What does it NOT catch yet?</summary><p>The MVP captures filesystem and command activity via git and shell history. Database-mutation capture (a disposable Postgres/MySQL in the sandbox network with query logging) and API-call interception are next on the roadmap — not in the box today. <code>--offline</code> gives you <code>--network none</code> if you want the agent fully dark in the meantime.</p></details>
+  <details><summary>Do I need Pro?</summary><p>No. The complete local safety workflow — credential stripping, Docker isolation, entrypoint or interactive-history evidence, captured transcripts, full diffs, offline mode, and manual approval — is part of the free MIT-licensed CLI. Pro is planned for teams that need centralized history, policy enforcement, access controls, and evidence exports.</p></details>
+  <details><summary>Does Pro make us compliant?</summary><p>No tool makes an organization compliant on its own. Planned Pro evidence exports are intended to support your SOC 2, HIPAA, or EU AI Act review process; your controls, policies, implementation, and legal assessment still determine compliance.</p></details>
+  <details><summary>What does it NOT catch yet?</summary><p>The CLI records filesystem changes through git plus the submitted one-shot entrypoint and stdout/stderr transcript, or interactive shell history. It does not trace every child-process syscall. Database-mutation capture and API-call interception are roadmap items, not available today. <code>--offline</code> gives you <code>--network none</code> if you want the agent fully dark in the meantime.</p></details>
   <details><summary>Where do I report a security issue?</summary><p>Don't open a public issue. Email <a href="mailto:security@kascadesecurity.com">security@kascadesecurity.com</a> — you'll get a response within 48 hours. We especially want to hear where the credential-swap heuristics or the approve gate can be beaten.</p></details>
 </div></section>
 </main>
