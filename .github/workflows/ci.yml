@@ -43,6 +43,47 @@ jobs:
           test -f .saferoom/sessions/*/approvals.jsonl   # approval evidence recorded
           recorded=$(python -c "import glob, json; p = sorted(glob.glob('.saferoom/sessions/*/approvals.jsonl'))[-1]; print(json.loads(open(p).read().splitlines()[-1])['patch_sha256'])")
           test "$recorded" = "$(sha256sum .saferoom/sessions/*/changes.patch | cut -d' ' -f1)"  # evidence hash matches the applied patch
+      - name: Runtime audit regression tests
+        run: |
+          mkdir /tmp/runtime-audit && cd /tmp/runtime-audit && git init -q
+          printf 'API_KEY=fake-real-runtime-secret\n' > .env
+          printf 'print("runtime")\n' > app.py
+          git add -A && git commit -qm init
+          python $GITHUB_WORKSPACE/saferoom.py init
+
+          python $GITHUB_WORKSPACE/saferoom.py run --local -- "printf 'stdout-marker\\n'; printf 'stderr-marker\\n' >&2; cat .env" > success.out 2>&1
+          first=$(find .saferoom/sessions -mindepth 1 -maxdepth 1 -type d | sort | head -n 1)
+          test -f "$first/transcript.log"
+          grep -q 'stdout-marker' "$first/transcript.log"
+          grep -q 'stderr-marker' "$first/transcript.log"
+          grep -q 'sr-dummy-secret' "$first/transcript.log"
+          ! grep -q 'fake-real-runtime-secret' "$first/transcript.log"
+          python $GITHUB_WORKSPACE/saferoom.py review "$(basename "$first")" | grep -q 'Exit code: 0'
+
+          set +e
+          python $GITHUB_WORKSPACE/saferoom.py run --local -- "printf 'failure-marker\\n'; printf 'failure-stderr\\n' >&2; echo retained > retained.txt; exit 7" > failure.out 2>&1
+          status=$?
+          set -e
+          test "$status" -eq 7
+          second=$(find .saferoom/sessions -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+          test "$second" != "$first"
+          test -f "$second/report.md"
+          test -f "$second/report.json"
+          test -f "$second/transcript.log"
+          grep -q 'failure-marker' "$second/transcript.log"
+          grep -q 'failure-stderr' "$second/transcript.log"
+          grep -q 'retained.txt' "$second/changes.patch"
+          grep -q 'Exit code: 7' "$second/report.md"
+          python - "$second/report.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as report:
+              assert json.load(report)["exit_code"] == 7
+          PY
+          grep -q 'audit preserved' failure.out
+          python $GITHUB_WORKSPACE/saferoom.py review "$(basename "$first")" | grep -q 'SafeRoom audit'
+          python $GITHUB_WORKSPACE/saferoom.py review "$(basename "$second")" | grep -q 'retained.txt'
+          test "$(find .saferoom/sessions -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 2
       - name: Reject tampered protected-path patch
         run: |
           mkdir /tmp/tamper && cd /tmp/tamper && git init -q
