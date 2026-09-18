@@ -1,13 +1,17 @@
 name: CI
 on: [push, pull_request]
 jobs:
-  smoke:
+  compatibility:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Syntax check
         run: python -m py_compile saferoom.py
       - name: Version check
@@ -15,6 +19,18 @@ jobs:
           v=$(python $GITHUB_WORKSPACE/saferoom.py --version)
           echo "$v"
           echo "$v" | grep -Eq '^saferoom [0-9]+\.[0-9]+\.[0-9]+$'   # exits 0 only for a semver string
+      - name: Release asset checks
+        run: |
+          bash -n install.sh
+          git diff --check
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+
+          parser = HTMLParser()
+          parser.feed(Path("landing/index.html").read_text(encoding="utf-8"))
+          parser.close()
+          PY
       - name: Smoke test (local mode)
         run: |
           git config --global user.email ci@saferoom.local
@@ -122,8 +138,17 @@ jobs:
           test ! -e nested/.env.link
           grep -q changed 'file with spaces.txt'
           test -f .gitattributes && test -f secret.masked
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Docker smoke test
         run: |
+          git config --global user.email ci@saferoom.local
+          git config --global user.name CI
           mkdir /tmp/demo2 && cd /tmp/demo2 && git init -q
           printf 'API_KEY=real-secret\n' > .env
           mkdir -p services/api && printf 'NESTED_KEY=docker-nested-secret\n' > services/api/.env.production
