@@ -108,7 +108,7 @@
     <div class="card"><h3><span class="num">1</span>saferoom init</h3><p>Scans your <code>.env*</code> files and writes a dummy-credential template plus a tiny config. Real values are never copied.</p></div>
     <div class="card"><h3><span class="num">2</span>saferoom run</h3><p>Clones the repo into a throwaway Docker container with the dummies mounted as <code>.env</code>. Point your agent at it — or pass the agent command directly. <code>--offline</code> cuts the network entirely.</p></div>
     <div class="card"><h3><span class="num">3</span>saferoom review</h3><p>An audit report with the submitted one-shot entrypoint or interactive shell history, captured stdout/stderr, changed-file list, and full reviewable git diff.</p></div>
-    <div class="card"><h3><span class="num">4</span>saferoom approve</h3><p>Git-applies only the reviewed patch to your working tree. <code>.env*</code> files are hard-excluded, even if the agent edited them.</p></div>
+    <div class="card"><h3><span class="num">4</span>saferoom approve</h3><p>Git-applies only the reviewed patch to your working tree. <code>.env*</code> files and <code>.saferoom/</code> state are hard-excluded at any depth.</p></div>
   </div>
 
   <div class="terminal"><div class="bar"><i></i><i></i><i></i></div><pre><span class="c"># an agent "cleans up" the billing schema inside the sandbox…</span>
@@ -135,14 +135,14 @@ A   migrations/001_cleanup.sql
   <h2>Why</h2>
   <p class="lead">Nearly half of AI-generated code fails security tests (Veracode, 2025). Claude Code and Cursor can refactor your whole backend from one prompt — and one hallucinated migration can drop your production tables. Every "the agent wrecked prod" story has the same shape:</p>
   <div class="grid">
-    <div class="card"><h3>The agent had <em>real</em> credentials</h3><p>SafeRoom swaps every <code>.env</code> value for a generated dummy before the clone is mounted. The real values never enter the container.</p></div>
+    <div class="card"><h3>The agent had <em>real</em> credentials</h3><p>SafeRoom removes every <code>.env*</code> file recursively and mounts generated dummies before the clone enters the container. The real values never enter it.</p></div>
     <div class="card"><h3>The agent had a <em>live</em> target</h3><p>The sandbox is a throwaway clone. Add <code>--offline</code> and the container has no network at all. Your working tree is untouched until you approve.</p></div>
     <div class="card"><h3>The human reviewed the <em>damage</em>, not the diff</h3><p>SafeRoom flips the order: captured transcript + diff first, then a required sign-off. The review is the product, not an afterthought.</p></div>
   </div>
   <h2 style="margin-top:56px;font-size:22px">Guarantees</h2>
   <ul class="checks" style="margin-top:16px">
     <li><b>Real credential values never enter the container</b> — only generated dummies do.</li>
-    <li><b><code>approve</code> never writes <code>.env*</code> back</b>, even if the agent edited them.</li>
+    <li><b><code>approve</code> never writes <code>.env*</code> or <code>.saferoom/</code> back</b>, at any directory depth.</li>
     <li><b>Throwaway clone</b> — your working tree is untouched until approval.</li>
     <li><b>Everything is local.</b> No telemetry, no account, no cloud.</li>
     <li><b>One readable file.</b> Stdlib-only Python 3.8+. If you can read <code>saferoom.py</code> in one sitting — and you can — you know exactly what runs on your machine.</li>
@@ -164,7 +164,7 @@ saferoom init                  <span class="c"># dummy-credential template + con
 saferoom run                   <span class="c"># interactive sandbox shell — point your agent here</span>
 saferoom run -- claude -p "refactor the billing module"   <span class="c"># or one-shot</span>
 saferoom review                <span class="c"># entrypoint/history, transcript, files, full diff</span>
-saferoom approve               <span class="c"># apply the reviewed patch (.env* always excluded)</span></pre>
+saferoom approve               <span class="c"># apply patch (.env* and .saferoom/ excluded)</span></pre>
   <p class="note">Single-file Python, stdlib only. <a href="https://github.com/kascadeceo/saferoom/blob/main/saferoom.py">Read saferoom.py</a> before you run it — that's the point.</p>
 </div></section>
 
@@ -176,7 +176,7 @@ saferoom approve               <span class="c"># apply the reviewed patch (.env*
     <tbody>
       <tr><td><b>Local containment</b>Credential-stripped Docker sandbox with optional offline execution.</td><td><b>Team visibility</b>Centralized approved-session history across developers and repositories.</td></tr>
       <tr><td><b>Local audit</b>Submitted entrypoint or interactive history, captured transcript, changed-file list, and full diff stored on your machine.</td><td><b>Organization policy</b>CI and repository controls that require reviewed agent work before merge.</td></tr>
-      <tr><td><b>Human sign-off</b>You decide whether to apply the reviewed patch; <code>.env*</code> remains excluded.</td><td><b>Access and key governance</b>Planned SSO, roles, and organization-wide credential-stripping policy.</td></tr>
+      <tr><td><b>Human sign-off</b>You decide whether to apply the reviewed patch; <code>.env*</code> and <code>.saferoom/</code> remain excluded.</td><td><b>Access and key governance</b>Planned SSO, roles, and organization-wide credential-stripping policy.</td></tr>
       <tr><td><b>No cloud dependency</b>No account, telemetry, hosted control plane, or subscription.</td><td><b>Evidence and support</b>Planned exports for audit programs, plus managed rollout and priority support.</td></tr>
     </tbody>
   </table>
@@ -190,7 +190,7 @@ saferoom approve               <span class="c"># apply the reviewed patch (.env*
     <div class="plan">
       <div class="tag">Open source</div><h3>SafeRoom CLI</h3>
       <div class="price">$0 <small>forever · MIT</small></div>
-      <ul><li>Credential-stripped Docker sandbox</li><li>Transcript + full diff audit</li><li><code>--offline</code> network isolation</li><li>Approve gate with <code>.env*</code> exclusion</li><li>Fully local, no account</li></ul>
+      <ul><li>Credential-stripped Docker sandbox</li><li>Transcript + full diff audit</li><li><code>--offline</code> network isolation</li><li>Approve gate excluding <code>.env*</code> and <code>.saferoom/</code></li><li>Fully local, no account</li></ul>
       <a class="btn btn-ghost" href="https://github.com/kascadeceo/saferoom">Get it on GitHub</a>
     </div>
     <div class="plan pro">

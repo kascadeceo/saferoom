@@ -56,7 +56,7 @@ saferoom init                  # scans .env*, writes dummy-credential template +
 saferoom run                   # interactive sandbox shell — point your agent here
 saferoom run -- claude -p "refactor the billing module"   # or one-shot
 saferoom review                # entrypoint/history, transcript, files, full diff
-saferoom approve               # git-apply the reviewed patch (.env* always excluded)
+saferoom approve               # apply reviewed patch (.env* and .saferoom/ excluded)
 ```
 
 ## Commands
@@ -76,7 +76,7 @@ saferoom approve               # git-apply the reviewed patch (.env* always excl
 ## Guarantees
 
 - Real credential values never enter the container — only generated dummies do.
-- `approve` never writes `.env*` files back, even if the agent edited them.
+- `approve` never writes `.env*` files or `.saferoom/` state back, at any depth.
 - The sandbox is a throwaway clone; your working tree is untouched until approval.
 - Everything is local. No telemetry, no account, no cloud.
 
@@ -97,7 +97,7 @@ becomes an organization-wide governance problem:
 |---|---|
 | Run agents in a local, credential-stripped Docker sandbox | Centralize approved session history across teams |
 | Review submitted entrypoints or interactive history, captured transcripts, changed files, and full diffs | Enforce review policy in CI and repository workflows |
-| Manually approve a reviewed patch; `.env*` stays excluded | Manage organization roles, access, and key-stripping policy |
+| Manually approve a reviewed patch; `.env*` and `.saferoom/` stay excluded | Manage organization roles, access, and key-stripping policy |
 | Work fully offline with `--network none` | Export evidence for internal, SOC 2, HIPAA, and EU AI Act review processes |
 | Keep audit artifacts on your machine, with no account or telemetry | Get managed rollout, governance design, and priority support from Kascade |
 

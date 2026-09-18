@@ -31,9 +31,11 @@ git add -A && git commit -qm init
 python3 /path/to/saferoom.py init
 python3 /path/to/saferoom.py run --local -- "echo test > new.txt && cat .env"
 python3 /path/to/saferoom.py review
+python3 /path/to/saferoom.py approve
 ```
 
-Expected: `cat .env` shows dummies, the audit lists `new.txt`, approve applies it.
+Expected: `cat .env` shows dummies, the audit lists `new.txt`, approval applies it,
+and the real `.env` remains unchanged.
 
 ## Reporting security issues
 

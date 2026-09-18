@@ -75,16 +75,18 @@ asciinema rec -c bash --cols 100 --rows 28 -t "SafeRoom: agent tries DROP TABLE"
    saferoom review
    ```
    → report shows `Isolation: docker (network: none)`, `Credentials swapped: .env`,
-     the full command line containing `DROP TABLE customers;` under
-     **Commands run in sandbox**, and the `+DROP TABLE customers;` hunk under
-     **Full diff**. Pause here ~3s — this is the money shot.
+     the submitted command line containing `DROP TABLE customers;` under
+     **Submitted one-shot entrypoint**, a link to the captured stdout/stderr
+     transcript, and the `+DROP TABLE customers;` hunk under **Full diff**.
+     Pause here ~3s — this is the money shot.
 
 6. Prove nothing shipped:
    ```bash
    git status --short && cat .env
    ```
-   → working tree clean (only the untracked `.env.saferoom`, `saferoom.json`,
-     `.saferoom/`), real `.env` intact. Do NOT run `saferoom approve`.
+   → no sandbox-produced migration in the real working tree; status shows only
+     SafeRoom's local setup/session artifacts, and the real `.env` is intact.
+     Do NOT run `saferoom approve`.
 
 7. Stop recording: `exit` (asciinema) — or let the tape end (vhs).
 
