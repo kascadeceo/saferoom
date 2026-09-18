@@ -34,7 +34,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -49,25 +48,6 @@ GIT_ENV = {
     "GIT_COMMITTER_NAME": "SafeRoom",
     "GIT_COMMITTER_EMAIL": "audit@saferoom.local",
 }
-
-DB_CONFIG = {
-    "postgres": {
-        "image": "postgres:16-alpine",
-        "port": "5432",
-        "url": "postgresql://saferoom:sr-dummy-secret@saferoom-db:5432/saferoom",
-    },
-    "mysql": {
-        "image": "mysql:8.4",
-        "port": "3306",
-        "url": "mysql://saferoom:sr-dummy-secret@saferoom-db:3306/saferoom",
-    },
-}
-
-SQL_MUTATION = re.compile(
-    r"^\s*(?:/\*.*?\*/\s*)*(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|"
-    r"TRUNCATE|REPLACE|GRANT|REVOKE|COMMENT|COPY|CALL)\b",
-    re.I,
-)
 
 C = {"g": "\033[32m", "y": "\033[33m", "r": "\033[31m", "b": "\033[36m", "0": "\033[0m"}
 
@@ -271,144 +251,6 @@ def require_docker():
             "macOS/Windows: start Docker Desktop.")
 
 
-def remove_container(name):
-    subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
-
-
-def remove_network(name):
-    subprocess.run(["docker", "network", "rm", name], capture_output=True, text=True)
-
-
-def docker_logs(name, since=None):
-    cmd = ["docker", "logs"]
-    if since:
-        cmd += ["--since", since]
-    result = sh([*cmd, name], check=False)
-    return result.stdout + result.stderr
-
-
-def wait_for_database(name, engine):
-    if engine == "postgres":
-        probe = ["docker", "exec", name, "pg_isready", "-U", "saferoom",
-                 "-d", "saferoom"]
-    else:
-        probe = ["docker", "exec", name, "mysqladmin", "ping", "-h", "localhost",
-                 "-usr", "-psr-dummy-secret", "--silent"]
-    for _ in range(60):
-        if subprocess.run(probe, capture_output=True, text=True).returncode == 0:
-            return
-        time.sleep(1)
-    detail = docker_logs(name).strip()[-1000:] or "no database logs available"
-    raise RunFailure(
-        f"{engine} sidecar did not become ready: {detail}",
-        f"run docker pull {DB_CONFIG[engine]['image']}, then retry")
-
-
-def database_run_args(engine, name, network):
-    cfg = DB_CONFIG[engine]
-    cmd = ["docker", "run", "-d", "--name", name, "--network", network,
-           "--network-alias", "saferoom-db"]
-    if engine == "postgres":
-        cmd += ["-e", "POSTGRES_USER=saferoom",
-                "-e", "POSTGRES_PASSWORD=sr-dummy-secret",
-                "-e", "POSTGRES_DB=saferoom", cfg["image"], "postgres",
-                "-c", "log_statement=all"]
-    else:
-        cmd += ["-e", "MYSQL_ROOT_PASSWORD=sr-dummy-secret",
-                "-e", "MYSQL_DATABASE=saferoom", "-e", "MYSQL_USER=saferoom",
-                "-e", "MYSQL_PASSWORD=sr-dummy-secret", cfg["image"],
-                "--general-log=ON", "--general-log-file=/proc/1/fd/1"]
-    return cmd
-
-
-def seed_database(name, engine, schema):
-    if engine == "postgres":
-        cmd = ["docker", "exec", "-i", name, "psql", "-v", "ON_ERROR_STOP=1",
-               "-U", "saferoom", "-d", "saferoom"]
-    else:
-        cmd = ["docker", "exec", "-i", name, "mysql", "-usr",
-               "-psr-dummy-secret", "saferoom"]
-    result = subprocess.run(cmd, input=schema.read_text(), capture_output=True, text=True)
-    if result.returncode:
-        raise RunFailure(
-            f"could not seed {engine} from {schema.name}: {result.stderr.strip()}",
-            "fix the schema SQL, then re-run the session")
-
-
-def start_database(engine, schema, network, session):
-    name = f"saferoom-db-{session}"
-    try:
-        sh(database_run_args(engine, name, network))
-    except subprocess.CalledProcessError as error:
-        raise RunFailure(
-            f"could not start {engine} sidecar: {docker_error_detail(error)}",
-            f"run docker pull {DB_CONFIG[engine]['image']}, then retry")
-    wait_for_database(name, engine)
-    seed_database(name, engine, schema)
-    since = datetime.now(timezone.utc).isoformat()
-    say(f"seeded disposable {engine} database from {schema.name}", "g")
-    return name, since
-
-
-def database_environment(engine):
-    cfg = DB_CONFIG[engine]
-    return {
-        "DATABASE_URL": cfg["url"],
-        "DB_HOST": "saferoom-db",
-        "DB_PORT": cfg["port"],
-        "DB_NAME": "saferoom",
-        "DB_USER": "saferoom",
-        "DB_PASSWORD": "sr-dummy-secret",
-    }
-
-
-def update_dummy_env(sandbox_repo, values):
-    env_file = sandbox_repo / ".env"
-    lines = env_file.read_text().splitlines() if env_file.exists() else []
-    keys = set(values)
-    lines = [line for line in lines
-             if not any(line.lstrip().startswith(f"{key}=") for key in keys)]
-    lines.extend(f"{key}={value}" for key, value in values.items())
-    env_file.write_text("\n".join(lines) + "\n")
-
-
-def resolve_schema(sandbox_repo, value):
-    if not value:
-        raise RunFailure(
-            "--database requires --schema PATH",
-            "provide a repo-relative SQL file used to initialize the disposable database")
-    schema = (sandbox_repo / value).resolve()
-    try:
-        schema.relative_to(sandbox_repo.resolve())
-    except ValueError:
-        raise RunFailure(
-            "--schema must stay inside the sandboxed repository",
-            "use a repo-relative path such as db/schema.sql")
-    if not schema.is_file():
-        raise RunFailure(
-            f"schema file not found: {value}",
-            "provide a repo-relative SQL file with --schema")
-    return schema
-
-
-def database_audit(name, engine, since, schema_name):
-    activity = docker_logs(name, since=since)
-    statements = []
-    for line in activity.splitlines():
-        match = re.search(r"statement:\s*(.*)$", line, re.I)
-        if engine == "mysql" and not match:
-            match = re.search(r"\bQuery\s+(.*)$", line)
-        if match and match.group(1).strip():
-            statements.append(match.group(1).strip())
-    return {
-        "engine": engine,
-        "schema": schema_name,
-        "statements": statements,
-        "mutations": [s for s in statements if SQL_MUTATION.search(s)],
-        "raw_log": activity,
-    }
-
-
 def allocate_session(root):
     parent = root / SR_DIR / "sessions"
     try:
@@ -439,18 +281,29 @@ def tee_process(cmd, transcript, cwd=None, env=None):
     streams = selectors.DefaultSelector()
     streams.register(process.stdout, selectors.EVENT_READ, sys.stdout.buffer)
     streams.register(process.stderr, selectors.EVENT_READ, sys.stderr.buffer)
-    with transcript.open("wb") as log:
-        while streams.get_map():
-            for key, _ in streams.select():
-                chunk = os.read(key.fileobj.fileno(), 4096)
-                if not chunk:
-                    streams.unregister(key.fileobj)
-                    continue
-                key.data.write(chunk)
-                key.data.flush()
-                log.write(chunk)
-                log.flush()
-    streams.close()
+    try:
+        with transcript.open("wb") as log:
+            while streams.get_map():
+                for key, _ in streams.select():
+                    chunk = os.read(key.fileobj.fileno(), 4096)
+                    if not chunk:
+                        streams.unregister(key.fileobj)
+                        continue
+                    key.data.write(chunk)
+                    key.data.flush()
+                    log.write(chunk)
+                    log.flush()
+    except KeyboardInterrupt:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        raise
+    finally:
+        streams.close()
     return process.wait()
 
 
@@ -463,7 +316,7 @@ IN_CONTAINER_SHELL = (
 )
 
 
-def render_audit_report(meta, names, stat, commands, diff, db_audit=None):
+def render_audit_report(meta, names, stat, commands, diff):
     lines = [
         f"# SafeRoom audit — session {meta['session']}", "",
         f"- Started:  {meta['started_utc']}",
@@ -489,13 +342,6 @@ def render_audit_report(meta, names, stat, commands, diff, db_audit=None):
     ]
     if meta.get("transcript"):
         lines += ["## Captured transcript", "Full stdout/stderr: `transcript.log`", ""]
-    if db_audit:
-        lines += [
-            "## Database mutations",
-            f"Engine: {db_audit['engine']} · Schema: {db_audit['schema']}",
-            "```sql", "\n".join(db_audit["mutations"]) or "(none detected)",
-            "```", "", "Complete post-seed database activity: `database.log`", "",
-        ]
     lines += [
         "## Full diff", "```diff", diff.strip() or "(empty)", "```", "",
         f"Approve with:  saferoom approve {meta['session']}",
@@ -503,7 +349,7 @@ def render_audit_report(meta, names, stat, commands, diff, db_audit=None):
     return "\n".join(lines)
 
 
-def collect_audit(sandbox_repo, base, session_dir, meta, db_audit=None):
+def collect_audit(sandbox_repo, base, session_dir, meta):
     sh(["git", "add", "-A"], cwd=sandbox_repo)
     changed = sh(["git", "diff", "--cached", "--name-only", "-z", "--no-renames", base],
                  cwd=sandbox_repo).stdout.split("\0")
@@ -525,15 +371,6 @@ def collect_audit(sandbox_repo, base, session_dir, meta, db_audit=None):
     if commands:
         cmd_log.write_text(commands)
 
-    if db_audit:
-        (session_dir / "database.log").write_text(db_audit["raw_log"])
-        meta["database"] = {
-            "engine": db_audit["engine"],
-            "schema": db_audit["schema"],
-            "statements_count": len(db_audit["statements"]),
-            "mutations_count": len(db_audit["mutations"]),
-        }
-
     warnings = []
     if "GIT binary patch" in diff or re.search(r"^Binary files ", diff, re.M):
         warnings.append("Binary content is encoded in changes.patch; inspect it before approval.")
@@ -544,7 +381,7 @@ def collect_audit(sandbox_repo, base, session_dir, meta, db_audit=None):
     })
     (session_dir / "report.json").write_text(json.dumps(meta, indent=2) + "\n")
     report = session_dir / "report.md"
-    report.write_text(render_audit_report(meta, names, stat, commands, diff, db_audit))
+    report.write_text(render_audit_report(meta, names, stat, commands, diff))
     return report, names
 
 
@@ -668,6 +505,7 @@ def cmd_run(args):
     }
 
     failure = None
+    interrupted = False
     try:
         if args.local:
             exit_code = run_local(args, sandbox_repo, transcript)
@@ -677,10 +515,15 @@ def cmd_run(args):
     except RunFailure as error:
         failure = error
         exit_code = 1
+    except KeyboardInterrupt:
+        interrupted = True
+        exit_code = 130
 
     meta["exit_code"] = exit_code
     if failure:
         meta["runtime_error"] = str(failure)
+    elif interrupted:
+        meta["runtime_error"] = "sandbox command interrupted"
 
     if args.screenshot:
         take_screenshot(args.screenshot, session_dir)
