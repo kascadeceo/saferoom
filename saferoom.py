@@ -4,7 +4,8 @@ SafeRoom — a controlled playground for AI coding agents.
 
 Clones your repo into an isolated sandbox, swaps live credentials for dummies,
 runs the agent inside a Docker container, and produces a full audit trail:
-files changed, commands run, clean git diffs. You approve what ships.
+submitted entrypoint or interactive history, captured output, files changed,
+and a reviewable git diff. You approve what ships.
 
 Usage:
   saferoom init                      Prepare config + dummy-credential template
@@ -20,8 +21,9 @@ Run options:
   --local            DEV/TEST ONLY: run on host with no container isolation
   --screenshot URL   Capture a UI screenshot after the run (needs playwright installed)
 
-MVP scope: Docker orchestration, .env credential swapping, command logging,
-git-based diff auditing. Linux-first (Debian/Ubuntu), works anywhere Docker runs.
+MVP scope: Docker orchestration, recursive .env* credential swapping, run
+transcripts or interactive history, and git-based diff auditing. Linux-first
+(Debian/Ubuntu), works anywhere Docker runs.
 """
 
 import argparse
