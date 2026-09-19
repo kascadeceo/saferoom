@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 launch/
 .netlify/
+
+# internal agent artifacts
+.maestro/
+.specify/
