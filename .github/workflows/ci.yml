@@ -33,9 +33,9 @@ jobs:
           PY
       - name: Smoke test (local mode)
         run: |
-          git config --global user.email ci@saferoom.local
-          git config --global user.name CI
           mkdir /tmp/demo && cd /tmp/demo && git init -q
+          git config user.email ci@saferoom.local
+          git config user.name CI
           printf 'API_KEY=real-secret\nDB_URL=postgres://real@prod/db\n' > .env
           mkdir -p services/api && printf 'NESTED_KEY=real-nested-secret\n' > services/api/.env.production
           printf 'print("hi")\n' > app.py
@@ -147,9 +147,9 @@ jobs:
           python-version: "3.12"
       - name: Docker smoke test
         run: |
-          git config --global user.email ci@saferoom.local
-          git config --global user.name CI
           mkdir /tmp/demo2 && cd /tmp/demo2 && git init -q
+          git config user.email ci@saferoom.local
+          git config user.name CI
           printf 'API_KEY=real-secret\n' > .env
           mkdir -p services/api && printf 'NESTED_KEY=docker-nested-secret\n' > services/api/.env.production
           git add -A && git commit -qm init
