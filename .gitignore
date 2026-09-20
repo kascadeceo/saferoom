@@ -1,4 +1,6 @@
 .saferoom/
+.maestro/
+.specify/
 __pycache__/
 *.pyc
 launch/
