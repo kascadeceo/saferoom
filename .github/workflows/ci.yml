@@ -62,6 +62,8 @@ jobs:
       - name: Runtime audit regression tests
         run: |
           mkdir /tmp/runtime-audit && cd /tmp/runtime-audit && git init -q
+          git config user.email ci@saferoom.local
+          git config user.name CI
           printf 'API_KEY=fake-real-runtime-secret\n' > .env
           printf 'print("runtime")\n' > app.py
           git add -A && git commit -qm init
