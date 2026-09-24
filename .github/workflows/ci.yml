@@ -105,6 +105,8 @@ jobs:
       - name: Reject tampered protected-path patch
         run: |
           mkdir /tmp/tamper && cd /tmp/tamper && git init -q
+          git config user.email ci@saferoom.local
+          git config user.name CI
           printf 'print("safe")\n' > app.py
           git add -A && git commit -qm init
           python $GITHUB_WORKSPACE/saferoom.py init
@@ -121,6 +123,8 @@ jobs:
       - name: Red-team review artifact
         run: |
           mkdir /tmp/redteam && cd /tmp/redteam && git init -q
+          git config user.email ci@saferoom.local
+          git config user.name CI
           printf 'plain\n' > plain.txt
           printf 'spaced\n' > 'file with spaces.txt'
           printf 'old-binary\n' > binary.bin
