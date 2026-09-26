@@ -33,6 +33,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -75,6 +76,9 @@ def sh(cmd, cwd=None, check=True, capture=True, env=None):
 
 def repo_root():
     root = Path.cwd()
+    result = sh(["git", "rev-parse", "--show-toplevel"], cwd=root, check=False)
+    if result.returncode == 0:
+        return Path(result.stdout.strip())
     if not (root / ".git").exists():
         say("current directory is not a git repo — SafeRoom will still sandbox it, "
             "but your real repo should be under git.", "y")
@@ -306,7 +310,7 @@ def cmd_run(args):
         if args.cmd:
             joined = " ".join(args.cmd)
             (sandbox_repo / SR_DIR / "history").write_text(joined + "\n")
-            subprocess.run(joined, shell=True, cwd=sandbox_repo, env=env)
+            meta["exit_code"] = subprocess.run(joined, shell=True, cwd=sandbox_repo, env=env).returncode
         else:
             say("interactive sandbox shell — exit to finish and audit")
             subprocess.run(
@@ -333,7 +337,7 @@ def cmd_run(args):
                 joined = " ".join(args.cmd)
                 (sandbox_repo / SR_DIR / "history").write_text(joined + "\n")
                 say(f"running: {joined}")
-                subprocess.run(["docker", "exec", name, "bash", "-lc", joined])
+                meta["exit_code"] = subprocess.run(["docker", "exec", name, "bash", "-lc", joined]).returncode
             else:
                 say("interactive sandbox shell — exit to finish and audit")
                 shell = IN_CONTAINER_SHELL.format(sr=SR_DIR)
@@ -381,7 +385,7 @@ def host_git_config(root, key, fallback):
     return out or fallback
 
 
-def record_approval(root, session, patch, decision="approved", reason=None):
+def record_approval(root, session, patch, decision="approved", reason=None, binding=None):
     """Append the review evidence: who decided, when, exactly what (patch hash)."""
     digest = hashlib.sha256(patch.read_bytes()).hexdigest()
     name = host_git_config(root, "user.name", os.environ.get("USER", "unknown"))
@@ -398,6 +402,8 @@ def record_approval(root, session, patch, decision="approved", reason=None):
         "patch_sha256": digest,
         "files_changed_count": files_changed,
     }
+    if binding:
+        record.update(binding)
     if reason:
         record["reason"] = reason
     session_dir = patch.parent
@@ -405,7 +411,7 @@ def record_approval(root, session, patch, decision="approved", reason=None):
         f.write(json.dumps(record) + "\n")
     report = session_dir / "report.md"
     if report.exists():
-        verb = "Approved" if decision == "approved" else "Rejected"
+        verb = {"approved": "Approved", "rejected": "Rejected", "dismissed": "Dismissed"}[decision]
         lead = "" if report.read_text().endswith("\n") else "\n"
         with report.open("a") as f:
             f.write(f"{lead}**{verb}** by {name} at {approved_utc} — "
@@ -413,112 +419,205 @@ def record_approval(root, session, patch, decision="approved", reason=None):
     return digest
 
 
+def session_path(root, name):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", name):
+        die("invalid session identifier")
+    path = root / SR_DIR / "sessions" / name
+    if path.is_symlink():
+        die("session symlinks are not supported")
+    return path
+
+
 def load_decisions(session_dir):
-    """Review records for a session, oldest first. Records written before the
-    `decision` field existed are approvals."""
     f = session_dir / "approvals.jsonl"
     if not f.exists():
         return []
-    out = []
-    for line in f.read_text().splitlines():
-        if line.strip():
-            rec = json.loads(line)
-            rec.setdefault("decision", "approved")
-            out.append(rec)
-    return out
+    records = [json.loads(line) for line in f.read_text().splitlines() if line.strip()]
+    if any(not isinstance(r, dict) for r in records):
+        raise ValueError("invalid decision record")
+    return records
+
+
+def review_state(session_dir):
+    """Fail closed. Only the latest explicit, hash-matched decision is usable."""
+    try:
+        patch = session_dir / "changes.patch"
+        if patch.is_symlink() or (session_dir / "approvals.jsonl").is_symlink():
+            return "invalid", None
+        if not patch.is_file():
+            return "missing_patch", None
+        data = patch.read_bytes()
+        records = load_decisions(session_dir)
+        if not records:
+            return ("pending" if data.strip() else "no_changes"), None
+        r = records[-1]
+        if r.get("decision") not in ("approved", "rejected", "dismissed"):
+            return "unknown", None
+        if r.get("patch_sha256") != hashlib.sha256(data).hexdigest():
+            return "stale", None
+        if r["decision"] == "approved" and not all(
+                isinstance(r.get(k), str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", r[k])
+                for k in ("base_commit", "approved_tree")):
+            return "unbound_approval", None
+        return r["decision"], r
+    except (OSError, ValueError, TypeError):
+        return "invalid", None
+
+
+def session_dirs(root):
+    d = root / SR_DIR / "sessions"
+    if d.is_symlink():
+        die("session store symlinks are not supported")
+    return sorted(session_path(root, p.name) for p in d.iterdir() if p.is_dir()) if d.exists() else []
 
 
 def pending_sessions(root):
-    """Sessions with unapplied changes and no recorded human decision."""
-    d = root / SR_DIR / "sessions"
-    out = []
-    if d.exists():
-        for p in sorted(q for q in d.iterdir() if q.is_dir()):
-            patch = p / "changes.patch"
-            if patch.exists() and patch.read_text().strip() and not load_decisions(p):
-                out.append(p.name)
-    return out
+    return [p.name for p in session_dirs(root)
+            if review_state(p)[0] not in ("approved", "rejected", "dismissed", "no_changes")]
+
+
+def approval_binding(root, patch):
+    if sh(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root).stdout.strip():
+        die("approval requires a clean tracked worktree and index; commit or resolve existing work first")
+    base = sh(["git", "rev-parse", "HEAD"], cwd=root).stdout.strip()
+    # A disposable index computes exactly the reviewed result, never staging other work.
+    with tempfile.TemporaryDirectory(prefix="saferoom-index-") as d:
+        env = {"GIT_INDEX_FILE": str(Path(d) / "index")}
+        sh(["git", "read-tree", base], cwd=root, env=env)
+        sh(["git", "apply", "--cached", *approval_excludes(), str(patch)], cwd=root, env=env)
+        tree = sh(["git", "write-tree"], cwd=root, env=env).stdout.strip()
+    return {"base_commit": base, "approved_tree": tree}
+
+
+def approval_excludes():
+    return ["--exclude=.env", "--exclude=.env.*", "--exclude=**/.env", "--exclude=**/.env.*",
+            f"--exclude={SR_DIR}/*", "--exclude=.git/*"]
 
 
 def cmd_approve(args):
     root = repo_root()
     session = args.session or latest_session(root)
-    patch = root / SR_DIR / "sessions" / session / "changes.patch"
-    if not patch.exists() or not patch.read_text().strip():
-        die(f"session {session} has no changes to approve")
-    excludes = ["--exclude=.env", "--exclude=.env.*", f"--exclude={SR_DIR}/*"]
+    patch = session_path(root, session) / "changes.patch"
+    if patch.is_symlink() or not patch.is_file() or not patch.read_bytes().strip():
+        die("session has no regular patch to approve")
     try:
-        sh(["git", "apply", "--check", *excludes, str(patch)], cwd=root)
-    except subprocess.CalledProcessError as e:
-        die(f"patch does not apply cleanly:\n{e.stderr.strip()}",
-            "review the diff and apply hunks manually, or re-run against a clean tree")
-    sh(["git", "apply", *excludes, str(patch)], cwd=root)
-    digest = record_approval(root, session, patch)
-    say(f"session {session} approved — changes applied to your working tree "
-        "(env files excluded)", "g")
-    say(f"evidence recorded: patch sha256 {digest} "
-        f"→ .saferoom/sessions/{session}/approvals.jsonl", "g")
-    say("review with git diff, then commit when satisfied.")
+        binding = approval_binding(root, patch)
+        sh(["git", "apply", "--check", *approval_excludes(), str(patch)], cwd=root)
+        sh(["git", "apply", *approval_excludes(), str(patch)], cwd=root)
+    except subprocess.CalledProcessError:
+        die("reviewed patch does not apply cleanly; no approval recorded")
+    record_approval(root, session, patch, binding=binding)
+    say("approved patch applied to working tree; commit exactly this tree before pushing", "g")
 
 
 def cmd_sessions(args):
     root = repo_root()
-    d = root / SR_DIR / "sessions"
-    if not d.exists():
-        say("no sessions yet")
-        if args.json:
-            print("[]")
-        return
     rows = []
-    for p in sorted(p for p in d.iterdir() if p.is_dir()):
-        rj = p / "report.json"
-        meta = json.loads(rj.read_text()) if rj.exists() else {}
-        patch = p / "changes.patch"
-        decisions = load_decisions(p)
-        rows.append({
-            "session": p.name,
-            "repo": str(root),
-            "started_utc": meta.get("started_utc"),
-            "files_changed": len(meta.get("files_changed", [])),
-            "has_patch": patch.exists() and bool(patch.read_text().strip()),
-            "decision": decisions[-1]["decision"] if decisions else "pending",
-            "decided_by": decisions[-1].get("approver_name") if decisions else None,
-            "patch_sha256": decisions[-1].get("patch_sha256") if decisions else None,
-            "report": str(p / "report.md"),
-        })
+    for p in session_dirs(root):
+        state, decision = review_state(p)
+        try:
+            meta = json.loads((p / "report.json").read_text())
+            if not isinstance(meta, dict):
+                meta = {}
+        except (OSError, ValueError):
+            meta = {}
+        files = meta.get("files_changed", [])
+        code = meta.get("exit_code")
+        rows.append({"session": p.name, "files_changed": len(files) if isinstance(files, list) else 0,
+                     "decision": state, "has_patch": state != "no_changes",
+                     "checks": "command_passed" if type(code) is int and code == 0 else
+                               "command_failed" if type(code) is int else "not_recorded",
+                     "patch_sha256": (decision or {}).get("patch_sha256"),
+                     "report": str(p / "report.md"),
+                     "decisions": str(p / "approvals.jsonl")})
     if args.json:
         print(json.dumps(rows, indent=2))
-        return
-    for r in rows:
-        print(f"{r['session']}   files changed: {r['files_changed']}"
-              f"   decision: {r['decision']}")
+    else:
+        for r in rows:
+            print(f"{r['session']} files={r['files_changed']} review={r['decision']} checks={r['checks']}")
+
+
+def gate_config(root):
+    directory = Path(sh(["git", "rev-parse", "--absolute-git-dir"], cwd=root).stdout.strip())
+    return directory / "saferoom-gate.json"
+
+
+def install_gate(root, trusted_base):
+    if not trusted_base:
+        die("install requires --trusted-base COMMIT: explicitly trust existing history")
+    if sh(["git", "config", "--get", "core.hooksPath"], cwd=root, check=False).stdout.strip():
+        die("custom core.hooksPath detected; refuse to replace existing hook configuration")
+    config = gate_config(root)
+    hook = config.parent / "hooks" / "pre-push"
+    if hook.exists() or config.exists():
+        die("hook or gate configuration already exists; review manually instead of overwriting")
+    base = sh(["git", "rev-parse", "--verify", trusted_base + "^{commit}"], cwd=root).stdout.strip()
+    if sh(["git", "merge-base", "--is-ancestor", base, "HEAD"], cwd=root, check=False).returncode:
+        die("trusted base must be an ancestor of HEAD")
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    command = shlex.join([sys.executable, str(Path(__file__).resolve()), "gate", "--pre-push"])
+    hook.write_text("#!/bin/sh\n# SafeRoom local review gate; do not claim server-side enforcement.\nexec " + command + "\n")
+    hook.chmod(0o700)
+    config.write_text(json.dumps({"version": 1, "trusted_base": base}) + "\n")
+    config.chmod(0o600)
+    say("local pre-push gate installed; history through the explicit base is trusted", "g")
+
+
+def check_outgoing(root, approvals, lines):
+    try:
+        config = json.loads(gate_config(root).read_text())
+        base = config["trusted_base"]
+        if config.get("version") != 1 or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", base):
+            raise ValueError()
+        for line in lines:
+            local_ref, local_oid, remote_ref, remote_oid = line.split()
+            if not remote_ref.startswith("refs/heads/"):
+                die("gate blocks tag pushes and ref deletions; separate review required")
+            if not all(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", v) for v in (local_oid, remote_oid)):
+                raise ValueError()
+            if set(local_oid) == {"0"}:
+                die("gate blocks ref deletion")
+            if sh(["git", "merge-base", "--is-ancestor", base, local_oid], cwd=root, check=False).returncode:
+                die("outgoing history is outside the trusted baseline")
+            start = base
+            if set(remote_oid) != {"0"}:
+                if sh(["git", "merge-base", "--is-ancestor", remote_oid, local_oid], cwd=root, check=False).returncode:
+                    die("non-fast-forward or unavailable remote history requires separate review")
+                if sh(["git", "merge-base", "--is-ancestor", base, remote_oid], cwd=root, check=False).returncode == 0:
+                    start = remote_oid
+            commits = sh(["git", "rev-list", "--reverse", f"{start}..{local_oid}"], cwd=root).stdout.splitlines()
+            for commit in commits:
+                parents = sh(["git", "show", "-s", "--format=%P", commit], cwd=root).stdout.split()
+                tree = sh(["git", "show", "-s", "--format=%T", commit], cwd=root).stdout.strip()
+                if len(parents) != 1 or not any(r["base_commit"] == parents[0] and r["approved_tree"] == tree for r in approvals):
+                    die("outgoing commit is not exactly covered by a current approval; push blocked")
+    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError):
+        die("invalid push input or gate configuration; push blocked")
 
 
 def cmd_gate(args):
     root = repo_root()
-    if args.dismiss:
-        session = args.dismiss
-        session_dir = root / SR_DIR / "sessions" / session
-        patch = session_dir / "changes.patch"
-        if not session_dir.exists():
-            die(f"no session {session}")
-        if not patch.exists() or not patch.read_text().strip():
-            die(f"session {session} has no changes to dismiss")
-        digest = record_approval(root, session, patch, decision="rejected",
-                                 reason=args.reason)
-        say(f"session {session} rejected — patch NOT applied", "y")
-        say(f"evidence recorded: patch sha256 {digest} "
-            f"→ .saferoom/sessions/{session}/approvals.jsonl", "y")
+    if args.install_hook:
+        install_gate(root, args.trusted_base)
+        return
+    if args.dismiss or args.reject:
+        session = args.dismiss or args.reject
+        patch = session_path(root, session) / "changes.patch"
+        if patch.is_symlink() or not patch.is_file() or not patch.read_bytes().strip():
+            die("no regular patch to dismiss or reject")
+        if review_state(patch.parent)[0] == "approved":
+            die("applied approval cannot be dismissed; inspect/revert the work explicitly")
+        decision = "dismissed" if args.dismiss else "rejected"
+        record_approval(root, session, patch, decision=decision, reason=args.reason)
+        say("review closed without applying work; this decision authorizes no outgoing commit", "y")
         return
     pending = pending_sessions(root)
     if pending:
-        say("gate: unreviewed session changes — action blocked", "r")
-        for s in pending:
-            print(f"  {s}   review: saferoom review {s}")
-            print(f"        ship:  saferoom approve {s}   "
-                  f"reject: saferoom gate --dismiss {s}")
-        sys.exit(1)
-    say("gate: no pending session changes", "g")
+        die("unreviewed, stale, unknown or malformed session evidence; push blocked")
+    if args.pre_push:
+        approvals = [r for p in session_dirs(root) for state, r in [review_state(p)] if state == "approved"]
+        check_outgoing(root, approvals, sys.stdin.read().splitlines())
+    say("gate passed" + (" for the supplied outgoing commits" if args.pre_push else " (session review only; not push authorization)"), "g")
 
 
 def cmd_clean(args):
@@ -567,10 +666,14 @@ def main():
     sp.add_argument("--json", action="store_true",
                     help="machine-readable session list with review state")
 
-    gp = sub.add_parser("gate", help="exit nonzero while session changes await review "
-                                      "(use as a git pre-push hook); --dismiss records a rejection")
-    gp.add_argument("--dismiss", metavar="SESSION", help="record a human rejection; patch is not applied")
-    gp.add_argument("--reason", help="why the session was rejected (recorded, not enforced)")
+    gp = sub.add_parser("gate", help="validate session reviews and exact outgoing commits")
+    mode = gp.add_mutually_exclusive_group()
+    mode.add_argument("--dismiss", metavar="SESSION", help="close unapplied work; grants no shipping approval")
+    mode.add_argument("--reject", metavar="SESSION", help="reject unapplied work; grants no shipping approval")
+    mode.add_argument("--pre-push", action="store_true", help="read Git pre-push updates on stdin")
+    mode.add_argument("--install-hook", action="store_true", help="install opt-in local hook; refuses overwrites")
+    gp.add_argument("--trusted-base", help="existing commit whose history is explicitly trusted at installation")
+    gp.add_argument("--reason", help="local review reason; not shown in task summaries")
 
     cp = sub.add_parser("clean", help="remove old sessions, keep the newest N")
     cp.add_argument("--keep", type=int, default=10, metavar="N",

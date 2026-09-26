@@ -10,6 +10,8 @@ jobs:
           python-version: "3.12"
       - name: Syntax check
         run: python -m py_compile saferoom.py
+      - name: Local push gate regression tests
+        run: python -B -m unittest discover -s tests -v
       - name: Version check
         run: |
           v=$(python $GITHUB_WORKSPACE/saferoom.py --version)

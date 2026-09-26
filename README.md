@@ -66,7 +66,7 @@ saferoom approve               # git-apply the reviewed patch (.env* always excl
 | `saferoom review [session]` | Print the audit report |
 | `saferoom approve [session]` | Apply the session patch to your working tree |
 | `saferoom sessions` | List past sessions (`--json` adds review state, patch hash, machine-readable) |
-| `saferoom gate` | Exit nonzero while any session has unreviewed changes — wire it as a `git pre-push` hook: `echo 'saferoom gate' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push`. `--dismiss SESSION --reason ...` records a human rejection without applying the patch |
+| `saferoom gate` | Check session decisions; unknown, malformed and stale records block. Install the outgoing-commit check with `gate --install-hook --trusted-base HEAD` only after reviewing the existing history. `--dismiss SESSION` and `--reject SESSION` close unapplied work without granting shipping permission |
 | `saferoom clean` | Delete oldest sessions, keep the newest 10 (`--keep N` to change); reports space freed |
 
 ## Guarantees
@@ -105,3 +105,39 @@ war stories about agents touching things they shouldn't have.
 
 ---
 Built by [Kascade Security](https://www.kascadesecurity.com). MIT licensed.
+
+
+## Local push approval
+
+In a deliberately selected repository, review and explicitly trust the existing
+history, then run `saferoom gate --install-hook --trusted-base HEAD`. The installer
+refuses existing hooks and custom hooksPath rather than replacing them. It installs
+an executable pre-push hook pinned to this local Python/CLI path. Moving that CLI
+requires reviewing/reinstalling the hook. This is opt-in, not native Maestro enforcement.
+
+`approve SESSION` requires a clean tracked tree/index, computes the exact approved
+result in a disposable Git index, applies the permitted patch to the working tree,
+and records its base commit, resulting tree and patch SHA-256. Commit exactly those
+changes. Each outgoing commit after the trusted installation baseline must have
+one parent matching a current approval's base, and exactly match its approved tree.
+Extra files, extra intermediate commits and stale approvals fail closed. Separate
+approved sessions can cover a linear series of commits. Merges, tags, deletion,
+force-push and unavailable remote history are blocked and need separate review.
+
+A pending, unknown, malformed, missing-patch or stale session blocks. Legacy
+approvals without base/tree binding block until explicitly reviewed again.
+Rejection/dismissal is not approval: it neither applies a patch nor authorizes an
+outgoing commit. Separately approved work can still ship. An applied approval
+cannot be dismissed; inspect/revert it explicitly. Plain `gate` checks reviews
+only; `gate --pre-push` reads Git updates on stdin and checks actual commits.
+
+Limits: a local user/agent can bypass with `git push --no-verify`, change/remove the
+hook/config, edit decisions or alter the CLI. No protected human identity or
+server-side enforcement is claimed. Commit messages/author metadata are not bound
+by tree approval. Do not prune session records needed for unpushed commits. Checks
+in session summaries mean the sandbox command exit code, not independent test
+certification; legacy sessions report not_recorded. Local evidence reports may
+contain sensitive diffs; open only after reviewing the recording boundary.
+
+Run `python3 -B -m unittest discover -s tests -v` for real pushes exclusively to
+temporary local bare remotes, including an explicit test proving --no-verify bypass.
