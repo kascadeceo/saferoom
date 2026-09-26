@@ -65,7 +65,8 @@ saferoom approve               # git-apply the reviewed patch (.env* always excl
 | `saferoom run --screenshot URL` | Full-page UI capture after the run (playwright) |
 | `saferoom review [session]` | Print the audit report |
 | `saferoom approve [session]` | Apply the session patch to your working tree |
-| `saferoom sessions` | List past sessions |
+| `saferoom sessions` | List past sessions (`--json` adds review state, patch hash, machine-readable) |
+| `saferoom gate` | Exit nonzero while any session has unreviewed changes — wire it as a `git pre-push` hook: `echo 'saferoom gate' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push`. `--dismiss SESSION --reason ...` records a human rejection without applying the patch |
 | `saferoom clean` | Delete oldest sessions, keep the newest 10 (`--keep N` to change); reports space freed |
 
 ## Guarantees

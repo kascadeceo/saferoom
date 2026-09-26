@@ -381,8 +381,8 @@ def host_git_config(root, key, fallback):
     return out or fallback
 
 
-def record_approval(root, session, patch):
-    """Append the approval evidence: who approved, when, exactly what (patch hash)."""
+def record_approval(root, session, patch, decision="approved", reason=None):
+    """Append the review evidence: who decided, when, exactly what (patch hash)."""
     digest = hashlib.sha256(patch.read_bytes()).hexdigest()
     name = host_git_config(root, "user.name", os.environ.get("USER", "unknown"))
     email = host_git_config(root, "user.email", "unknown")
@@ -391,22 +391,53 @@ def record_approval(root, session, patch):
                         if line.startswith("diff --git "))
     record = {
         "session": session,
-        "approved_utc": approved_utc,
+        "decision": decision,
+        "decided_utc": approved_utc,
         "approver_name": name,
         "approver_email": email,
         "patch_sha256": digest,
         "files_changed_count": files_changed,
     }
+    if reason:
+        record["reason"] = reason
     session_dir = patch.parent
     with (session_dir / "approvals.jsonl").open("a") as f:
         f.write(json.dumps(record) + "\n")
     report = session_dir / "report.md"
     if report.exists():
+        verb = "Approved" if decision == "approved" else "Rejected"
         lead = "" if report.read_text().endswith("\n") else "\n"
         with report.open("a") as f:
-            f.write(f"{lead}**Approved** by {name} at {approved_utc} — "
+            f.write(f"{lead}**{verb}** by {name} at {approved_utc} — "
                     f"patch sha256 {digest}\n")
     return digest
+
+
+def load_decisions(session_dir):
+    """Review records for a session, oldest first. Records written before the
+    `decision` field existed are approvals."""
+    f = session_dir / "approvals.jsonl"
+    if not f.exists():
+        return []
+    out = []
+    for line in f.read_text().splitlines():
+        if line.strip():
+            rec = json.loads(line)
+            rec.setdefault("decision", "approved")
+            out.append(rec)
+    return out
+
+
+def pending_sessions(root):
+    """Sessions with unapplied changes and no recorded human decision."""
+    d = root / SR_DIR / "sessions"
+    out = []
+    if d.exists():
+        for p in sorted(q for q in d.iterdir() if q.is_dir()):
+            patch = p / "changes.patch"
+            if patch.exists() and patch.read_text().strip() and not load_decisions(p):
+                out.append(p.name)
+    return out
 
 
 def cmd_approve(args):
@@ -435,13 +466,59 @@ def cmd_sessions(args):
     d = root / SR_DIR / "sessions"
     if not d.exists():
         say("no sessions yet")
+        if args.json:
+            print("[]")
         return
+    rows = []
     for p in sorted(p for p in d.iterdir() if p.is_dir()):
         rj = p / "report.json"
-        n = "?"
-        if rj.exists():
-            n = len(json.loads(rj.read_text()).get("files_changed", []))
-        print(f"{p.name}   files changed: {n}")
+        meta = json.loads(rj.read_text()) if rj.exists() else {}
+        patch = p / "changes.patch"
+        decisions = load_decisions(p)
+        rows.append({
+            "session": p.name,
+            "repo": str(root),
+            "started_utc": meta.get("started_utc"),
+            "files_changed": len(meta.get("files_changed", [])),
+            "has_patch": patch.exists() and bool(patch.read_text().strip()),
+            "decision": decisions[-1]["decision"] if decisions else "pending",
+            "decided_by": decisions[-1].get("approver_name") if decisions else None,
+            "patch_sha256": decisions[-1].get("patch_sha256") if decisions else None,
+            "report": str(p / "report.md"),
+        })
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return
+    for r in rows:
+        print(f"{r['session']}   files changed: {r['files_changed']}"
+              f"   decision: {r['decision']}")
+
+
+def cmd_gate(args):
+    root = repo_root()
+    if args.dismiss:
+        session = args.dismiss
+        session_dir = root / SR_DIR / "sessions" / session
+        patch = session_dir / "changes.patch"
+        if not session_dir.exists():
+            die(f"no session {session}")
+        if not patch.exists() or not patch.read_text().strip():
+            die(f"session {session} has no changes to dismiss")
+        digest = record_approval(root, session, patch, decision="rejected",
+                                 reason=args.reason)
+        say(f"session {session} rejected — patch NOT applied", "y")
+        say(f"evidence recorded: patch sha256 {digest} "
+            f"→ .saferoom/sessions/{session}/approvals.jsonl", "y")
+        return
+    pending = pending_sessions(root)
+    if pending:
+        say("gate: unreviewed session changes — action blocked", "r")
+        for s in pending:
+            print(f"  {s}   review: saferoom review {s}")
+            print(f"        ship:  saferoom approve {s}   "
+                  f"reject: saferoom gate --dismiss {s}")
+        sys.exit(1)
+    say("gate: no pending session changes", "g")
 
 
 def cmd_clean(args):
@@ -486,7 +563,14 @@ def main():
     apv = sub.add_parser("approve", help="apply approved diff to real repo")
     apv.add_argument("session", nargs="?")
 
-    sub.add_parser("sessions", help="list sessions")
+    sp = sub.add_parser("sessions", help="list sessions")
+    sp.add_argument("--json", action="store_true",
+                    help="machine-readable session list with review state")
+
+    gp = sub.add_parser("gate", help="exit nonzero while session changes await review "
+                                      "(use as a git pre-push hook); --dismiss records a rejection")
+    gp.add_argument("--dismiss", metavar="SESSION", help="record a human rejection; patch is not applied")
+    gp.add_argument("--reason", help="why the session was rejected (recorded, not enforced)")
 
     cp = sub.add_parser("clean", help="remove old sessions, keep the newest N")
     cp.add_argument("--keep", type=int, default=10, metavar="N",
@@ -494,7 +578,7 @@ def main():
 
     args = ap.parse_args()
     {"init": cmd_init, "run": cmd_run, "review": cmd_review,
-     "approve": cmd_approve, "sessions": cmd_sessions,
+     "approve": cmd_approve, "sessions": cmd_sessions, "gate": cmd_gate,
      "clean": cmd_clean}[args.command](args)
 
 
