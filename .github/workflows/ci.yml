@@ -44,6 +44,26 @@ jobs:
           test "$recorded" = "$(sha256sum .saferoom/sessions/*/changes.patch | cut -d' ' -f1)"  # evidence hash matches the applied patch
           python $GITHUB_WORKSPACE/saferoom.py sessions --json | grep -q '"decision": "approved"'
           python $GITHUB_WORKSPACE/saferoom.py gate   # approved session => gate open
+      - name: Pro features (eval license, HTML report, evidence chain)
+        run: |
+          cd /tmp/demo
+          key=$(python $GITHUB_WORKSPACE/saferoom.py license eval --email ci@saferoom.local)
+          echo "$key" | grep -Eq '^SR-[A-Za-z0-9_-]+-[A-Za-z0-9_-]{43}$'
+          python $GITHUB_WORKSPACE/saferoom.py license activate "$key"
+          python $GITHUB_WORKSPACE/saferoom.py license status | grep -q 'tier=eval'
+          python $GITHUB_WORKSPACE/saferoom.py review --html
+          test -f .saferoom/sessions/*/report.html
+          grep -q 'new.txt' .saferoom/sessions/*/report.html                    # diff content present
+          grep -q 'Evaluation copy' .saferoom/sessions/*/report.html            # eval watermark
+          ! grep -qE '<(script|link)[ >]' .saferoom/sessions/*/report.html      # self-contained, no CDN
+          python $GITHUB_WORKSPACE/saferoom.py export --compliance
+          test -f .saferoom/sessions/*/evidence.jsonl
+          grep -q '"event":"run"' .saferoom/sessions/*/evidence.jsonl
+          grep -q '"event":"command"' .saferoom/sessions/*/evidence.jsonl
+          grep -q '"event":"decision"' .saferoom/sessions/*/evidence.jsonl
+          python $GITHUB_WORKSPACE/saferoom.py export --verify                  # chain verifies
+          sed -i 's/"event":"command"/"event":"tampered"/' .saferoom/sessions/*/evidence.jsonl
+          ! python $GITHUB_WORKSPACE/saferoom.py export --verify                # tamper must fail
       - name: Docker smoke test
         run: |
           mkdir /tmp/demo2 && cd /tmp/demo2 && git init -q

@@ -64,7 +64,10 @@ saferoom approve               # git-apply the reviewed patch (.env* always excl
 | `saferoom run --image node:22` | Choose the sandbox image |
 | `saferoom run --screenshot URL` | Full-page UI capture after the run (playwright) |
 | `saferoom review [session]` | Print the audit report |
+| `saferoom review --html` | Also write a shareable, self-contained `report.html` (Pro) |
 | `saferoom approve [session]` | Apply the session patch to your working tree |
+| `saferoom export --compliance` | Write hash-chained `evidence.jsonl` for auditors; `export --verify [FILE]` re-checks a chain (Pro) |
+| `saferoom license` | `eval --email you@team` mints a free eval key · `activate KEY` unlocks Pro · `status` shows it |
 | `saferoom sessions` | List past sessions (`--json` adds review state, patch hash, machine-readable) |
 | `saferoom gate` | Check session decisions; unknown, malformed and stale records block. Install the outgoing-commit check with `gate --install-hook --trusted-base HEAD` only after reviewing the existing history. `--dismiss SESSION` and `--reject SESSION` close unapplied work without granting shipping permission |
 | `saferoom clean` | Delete oldest sessions, keep the newest 10 (`--keep N` to change); reports space freed |
@@ -74,7 +77,20 @@ saferoom approve               # git-apply the reviewed patch (.env* always excl
 - Real credential values never enter the container — only generated dummies do.
 - `approve` never writes `.env*` files back, even if the agent edited them.
 - The sandbox is a throwaway clone; your working tree is untouched until approval.
-- Everything is local. No telemetry, no account, no cloud.
+- Everything is local. The CLI makes **zero network calls**, with one explicit
+  exception you run yourself: `saferoom license activate` (a single one-time
+  check against the license endpoint; `--offline` skips even that). No
+  telemetry, no analytics, no accounts.
+
+## Evidence your auditors can read (Pro)
+
+`saferoom review --html` turns a session audit into one self-contained HTML
+file — inline styles, no CDN, safe to email. `saferoom export --compliance`
+emits `evidence.jsonl`: one record per event (run, command, diff, decision,
+export), each with a UTC timestamp, actor, and a SHA-256 hash chain linking it
+to the previous record — so any later edit is detectable
+(`saferoom export --verify` re-checks the whole chain). Eval keys are free:
+`saferoom license eval --email you@team`.
 
 ## How SafeRoom relates to sandboxes you already use
 
@@ -88,14 +104,16 @@ Use both.
 
 - [ ] Database mutation capture (proxy Postgres/MySQL in the sandbox)
 - [ ] API-call interception and logging
-- [ ] HTML audit reports
+- [x] HTML audit reports (`review --html`, Pro)
 - [ ] Hosted session history + CI hooks (paid tier)
-- [ ] Compliance-mode logs (HIPAA / SOC 2 evidence format)
+- [x] Compliance-mode logs (`export --compliance`, Pro)
 
 ## Pro
 
-A hosted tier ($49/mo — session history, CI hooks, priority support) funds
-development. The CLI stays MIT-licensed and fully functional forever.
+SafeRoom Pro ($39/mo per seat, $390/yr, or $249 launch lifetime) adds the
+evidence layer: self-contained HTML audit reports, hash-chained compliance
+exports, and hosted license verification for CI. The CLI stays MIT-licensed
+and everything runs locally — licensing is goodwill, not DRM.
 → https://getsaferoom.netlify.app
 
 ## Contributing
