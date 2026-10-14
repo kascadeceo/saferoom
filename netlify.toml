@@ -1,0 +1,14 @@
+# SafeRoom — hosted commercial layer (see docs/founder-runbook.md).
+# Static marketing site + two serverless functions:
+#   POST /api/license/verify  (netlify/functions/api-license-verify.mts)
+#   GET  /welcome            (netlify/functions/welcome.mts)
+[build]
+  publish = "landing"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[dev]
+  functions = "netlify/functions"
+  publish = "landing"
